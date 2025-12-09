@@ -83,52 +83,38 @@ def get_week_range(weeks_back: int = 0) -> tuple[str, str]:
 
 def fetch_actions_via_report(start_date: str, end_date: str) -> list[dict]:
     """
-    Fetch actions via Advanced Action Listing report to get custom fields like Text1.
+    Debug: Check what fields are available in the Actions API response.
     """
-    print(f"   🔍 Trying Advanced Action Listing report for custom fields...")
+    print(f"   🔍 Checking Actions API fields...")
     
-    report_id = "adv_action_listing_pm_only"
-    
-    # Metadata showed filters are: 'Start Date', 'End Date', 'Campaign', etc.
     params = {
-        "Start Date": start_date,
-        "End Date": end_date,
-        "Campaign": CAMPAIGN_ID
+        "CampaignId": CAMPAIGN_ID,
+        "ActionDateStart": f"{start_date}T00:00:00Z",
+        "ActionDateEnd": f"{end_date}T23:59:59Z",
+        "PageSize": 5  # Just get a few for debugging
     }
-    
-    print(f"      Trying report with params: {params}")
     
     try:
         response = requests.get(
-            f"{BASE_URL}/Reports/{report_id}",
+            f"{BASE_URL}/Actions",
             auth=get_auth(),
             params=params,
             headers={"Accept": "application/json"}
         )
         
-        print(f"      Response status: {response.status_code}")
-        
         if response.status_code == 200:
             data = response.json()
-            records = data.get("Records", [])
-            print(f"      Records count: {len(records)}")
+            actions = data.get("Actions", [])
             
-            if records:
-                print(f"      📋 Fields available: {list(records[0].keys())}")
-                sample = records[0]
-                text_fields = {k: v for k, v in sample.items() if 'text' in k.lower() or 'Text' in k}
-                if text_fields:
-                    print(f"      📋 Text fields found: {text_fields}")
-                else:
-                    print(f"      📋 No Text fields in response")
-                return records
-        else:
-            print(f"      Response: {response.text[:300]}")
-            
+            if actions:
+                # Print ALL fields from first action
+                print(f"      📋 All fields in Actions API response:")
+                for key, value in actions[0].items():
+                    print(f"         {key}: {value}")
+                    
     except Exception as e:
         print(f"      ⚠️  Error: {e}")
     
-    print(f"   ⚠️  No reports returned data")
     return []
 
 
