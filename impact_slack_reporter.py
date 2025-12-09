@@ -91,53 +91,62 @@ def fetch_actions_via_report(start_date: str, end_date: str) -> list[dict]:
     report_ids = [
         "adv_action_listing_pm_only",
         "adv_action_list_sku_pm_only",
-        "advanced_action_listing_with_sku"
+    ]
+    
+    # Try different date parameter combinations
+    date_param_sets = [
+        {
+            "CAMPAIGN_ID": CAMPAIGN_ID,
+            "START_DATE": f"{start_date}T00:00:00Z",
+            "END_DATE": f"{end_date}T23:59:59Z"
+        },
+        {
+            "CampaignId": CAMPAIGN_ID,
+            "StartDate": f"{start_date}T00:00:00Z",
+            "EndDate": f"{end_date}T23:59:59Z"
+        },
+        {
+            "CampaignId": CAMPAIGN_ID,
+            "ACTION_DATE_START": f"{start_date}T00:00:00Z",
+            "ACTION_DATE_END": f"{end_date}T23:59:59Z"
+        },
     ]
     
     for report_id in report_ids:
-        print(f"      Trying report: {report_id}")
-        
-        params = {
-            "CampaignId": CAMPAIGN_ID,
-            "ActionDateStart": f"{start_date}T00:00:00Z",
-            "ActionDateEnd": f"{end_date}T23:59:59Z"
-        }
-        
-        try:
-            response = requests.get(
-                f"{BASE_URL}/Reports/{report_id}",
-                auth=get_auth(),
-                params=params,
-                headers={"Accept": "application/json"}
-            )
+        for params in date_param_sets:
+            print(f"      Trying report: {report_id} with params: {list(params.keys())}")
             
-            print(f"      Response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"      ⚠️  Report returned {response.status_code}: {response.text[:300]}")
+            try:
+                response = requests.get(
+                    f"{BASE_URL}/Reports/{report_id}",
+                    auth=get_auth(),
+                    params=params,
+                    headers={"Accept": "application/json"}
+                )
+                
+                if response.status_code != 200:
+                    print(f"      ⚠️  Status {response.status_code}")
+                    continue
+                
+                data = response.json()
+                records = data.get("Records", [])
+                
+                if records:
+                    print(f"      ✅ Got {len(records)} records!")
+                    # DEBUG: Show all field names from first record
+                    print(f"      📋 Fields available: {list(records[0].keys())}")
+                    # DEBUG: Show sample of Text fields if present
+                    sample = records[0]
+                    text_fields = {k: v for k, v in sample.items() if 'text' in k.lower() or 'Text' in k}
+                    if text_fields:
+                        print(f"      📋 Text fields found: {text_fields}")
+                    else:
+                        print(f"      📋 No Text fields found in response")
+                    return records
+                
+            except Exception as e:
+                print(f"      ⚠️  Error: {e}")
                 continue
-            
-            data = response.json()
-            records = data.get("Records", [])
-            
-            if records:
-                print(f"      ✅ Got {len(records)} records")
-                # DEBUG: Show all field names from first record
-                print(f"      📋 Fields available: {list(records[0].keys())}")
-                # DEBUG: Show sample of Text fields if present
-                sample = records[0]
-                text_fields = {k: v for k, v in sample.items() if 'text' in k.lower() or 'Text' in k}
-                if text_fields:
-                    print(f"      📋 Text fields found: {text_fields}")
-                else:
-                    print(f"      📋 No Text fields found in response")
-                return records
-            else:
-                print(f"      ⚠️  Report returned 0 records")
-            
-        except Exception as e:
-            print(f"      ⚠️  Error: {e}")
-            continue
     
     print(f"   ⚠️  No reports returned data with Text fields")
     return []
