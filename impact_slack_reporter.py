@@ -252,15 +252,15 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
             reversed_actions += 1
             partner_metrics[partner]["reversed"] += 1
     
-    # Calculate total clicks and cost from partner stats
-    total_clicks = sum(p.get("clicks", 0) for p in partner_stats.values())
-    total_cost = sum(p.get("cost", 0) for p in partner_stats.values())
+    # Calculate total clicks and cost from partner stats (if available)
+    total_clicks = sum(p.get("clicks", 0) for p in partner_stats.values()) if partner_stats else 0
+    total_cost = sum(p.get("cost", 0) for p in partner_stats.values()) if partner_stats else 0
     
     # If cost from reports is 0, fall back to payout sum from actions
     if total_cost == 0:
         total_cost = sum(p["cost"] for p in partner_metrics.values())
     
-    # Merge click data into partner metrics
+    # Merge click data into partner metrics (if available)
     for partner, stats in partner_stats.items():
         if partner not in partner_metrics:
             partner_metrics[partner] = {
@@ -272,10 +272,11 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         partner_metrics[partner]["clicks"] = stats.get("clicks", 0)
     
     # Calculate derived metrics
-    cpc = total_cost / total_clicks if total_clicks > 0 else 0
-    conversion_rate = (payment_success_actions / total_clicks * 100) if total_clicks > 0 else 0
+    # Note: CPC and Conversion Rate require click data from Reports API
+    cpc = total_cost / total_clicks if total_clicks > 0 else None
+    conversion_rate = (payment_success_actions / total_clicks * 100) if total_clicks > 0 else None
     reversal_rate = (reversed_actions / total_actions * 100) if total_actions > 0 else 0
-    cac = total_cost / payment_success_actions if payment_success_actions > 0 else 0
+    cac = total_cost / payment_success_actions if payment_success_actions > 0 else None
     
     return {
         "payment_success_actions": payment_success_actions,
@@ -367,16 +368,22 @@ def identify_partner_drivers(
 # =============================================================================
 
 def format_currency(amount: float) -> str:
+    if amount is None:
+        return "N/A"
     return f"${amount:,.2f}"
 
 
 def format_number(num: float, decimals: int = 0) -> str:
+    if num is None:
+        return "N/A"
     if decimals == 0:
         return f"{num:,.0f}"
     return f"{num:,.{decimals}f}"
 
 
 def format_pct(value: float) -> str:
+    if value is None:
+        return "N/A"
     return f"{value:.2f}%"
 
 
@@ -607,10 +614,13 @@ def run_weekly_report():
     partner_drivers = identify_partner_drivers(current_metrics, previous_metrics)
     
     # Print summary to console
+    def fmt_pct(val):
+        return f"{val:.1f}" if val is not None else "N/A"
+    
     print("\n📊 Summary:")
-    print(f"   Actions (Payment Success): {current_metrics['payment_success_actions']} ({changes['payment_success_actions']['change_pct']:.1f}% WoW)")
-    print(f"   Total Cost: ${current_metrics['total_cost']:,.2f} ({changes['total_cost']['change_pct']:.1f}% WoW)")
-    print(f"   CAC: ${current_metrics['cac']:,.2f} ({changes['cac']['change_pct']:.1f}% WoW)")
+    print(f"   Actions (Payment Success): {current_metrics['payment_success_actions']} ({fmt_pct(changes['payment_success_actions']['change_pct'])}% WoW)")
+    print(f"   Total Cost: ${current_metrics['total_cost']:,.2f} ({fmt_pct(changes['total_cost']['change_pct'])}% WoW)")
+    print(f"   CAC: ${current_metrics['cac']:,.2f} ({fmt_pct(changes['cac']['change_pct'])}% WoW)")
     print(f"   Conversion Rate: {current_metrics['conversion_rate']:.2f}%")
     
     # Build and send Slack message
