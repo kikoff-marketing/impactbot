@@ -296,10 +296,13 @@ def calculate_changes(current: Dict, previous: Dict) -> Dict[str, Any]:
     """Calculate WoW changes for each metric."""
     
     def calc_change(curr: float, prev: float) -> Dict:
+        # Handle None values
+        if curr is None or prev is None:
+            return {"current": curr, "previous": prev, "change_pct": None, "change_abs": None}
         if prev == 0:
             pct = None if curr == 0 else float('inf')
-        else:
-            pct = ((curr - prev) / prev) * 100
+            return {"current": curr, "previous": prev, "change_pct": pct, "change_abs": curr - prev}
+        pct = ((curr - prev) / prev) * 100
         return {"current": curr, "previous": prev, "change_pct": pct, "change_abs": curr - prev}
     
     return {
