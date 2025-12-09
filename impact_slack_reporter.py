@@ -80,19 +80,23 @@ def get_week_range(weeks_back: int = 0) -> tuple[str, str]:
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 
-def fetch_actions(start_date: str, end_date: str) -> list[dict]:
+def fetch_actions(start_date: str, end_date: str, campaign_id: str = None) -> list[dict]:
     """Fetch all conversion actions within a date range."""
     actions = []
     page = 1
-    page_size = 100
+    page_size = 2000  # API minimum is 2000, max is 20000
     
     while True:
         params = {
-            "StartDate": start_date,
-            "EndDate": end_date,
+            "ActionDateStart": f"{start_date}T00:00:00Z",
+            "ActionDateEnd": f"{end_date}T23:59:59Z",
             "PageSize": page_size,
             "Page": page
         }
+        
+        # Add campaign filter if specified
+        if campaign_id:
+            params["CampaignId"] = campaign_id
         
         response = requests.get(
             f"{BASE_URL}/Actions",
@@ -100,7 +104,11 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
             params=params,
             headers={"Accept": "application/json"}
         )
-        response.raise_for_status()
+        
+        # Better error handling - print response for debugging
+        if response.status_code != 200:
+            print(f"❌ API Error {response.status_code}: {response.text}")
+            response.raise_for_status()
         data = response.json()
         
         batch = data.get("Actions", [])
@@ -123,18 +131,26 @@ def fetch_clicks_by_partner(start_date: str, end_date: str) -> Dict[str, int]:
     partner_clicks = {}
     
     params = {
-        "StartDate": start_date,
-        "EndDate": end_date
+        "StartDate": f"{start_date}T00:00:00Z",
+        "EndDate": f"{end_date}T23:59:59Z"
     }
     
-    response = requests.get(
-        f"{BASE_URL}/Reports/mp_performance_by_day",
-        auth=get_auth(),
-        params=params,
-        headers={"Accept": "application/json"}
-    )
-    response.raise_for_status()
-    records = response.json().get("Records", [])
+    try:
+        response = requests.get(
+            f"{BASE_URL}/Reports/mp_performance_by_day",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code != 200:
+            print(f"⚠️  Clicks API returned {response.status_code}")
+            return {}
+        
+        records = response.json().get("Records", [])
+    except Exception as e:
+        print(f"⚠️  Error fetching clicks: {e}")
+        return {}
     
     for record in records:
         partner = record.get("MediaPartnerName", "Unknown")
@@ -151,18 +167,27 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     partner_stats = {}
     
     params = {
-        "StartDate": start_date,
-        "EndDate": end_date
+        "StartDate": f"{start_date}T00:00:00Z",
+        "EndDate": f"{end_date}T23:59:59Z"
     }
     
-    response = requests.get(
-        f"{BASE_URL}/Reports/mp_performance_by_day",
-        auth=get_auth(),
-        params=params,
-        headers={"Accept": "application/json"}
-    )
-    response.raise_for_status()
-    records = response.json().get("Records", [])
+    try:
+        response = requests.get(
+            f"{BASE_URL}/Reports/mp_performance_by_day",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code != 200:
+            print(f"⚠️  Reports API returned {response.status_code}: {response.text}")
+            # Return empty dict instead of failing - we can still get data from Actions
+            return {}
+        
+        records = response.json().get("Records", [])
+    except Exception as e:
+        print(f"⚠️  Error fetching partner stats: {e}")
+        return {}
     
     for record in records:
         partner = record.get("MediaPartnerName", "Unknown")
