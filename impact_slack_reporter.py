@@ -121,250 +121,15 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
     return actions
 
 
-def list_available_reports() -> list:
-    """List all reports available to this account."""
-    try:
-        response = requests.get(
-            f"{BASE_URL}/Reports",
-            auth=get_auth(),
-            headers={"Accept": "application/json"}
-        )
-        
-        if response.status_code != 200:
-            print(f"⚠️  List Reports returned {response.status_code}: {response.text[:200]}")
-            return []
-        
-        data = response.json()
-        reports = data.get("Reports", [])
-        
-        print(f"📋 Available Reports ({len(reports)} total):")
-        for report in reports[:15]:  # Show first 15
-            api_accessible = report.get("ApiAccessible", False)
-            marker = "✅" if api_accessible else "❌"
-            print(f"   {marker} {report.get('Name', 'Unknown')} (ID: {report.get('Id', 'N/A')})")
-        
-        if len(reports) > 15:
-            print(f"   ... and {len(reports) - 15} more")
-        
-        return reports
-    except Exception as e:
-        print(f"⚠️  Error listing reports: {e}")
-        return []
-
-
-def fetch_clicks_from_report(start_date: str, end_date: str) -> int:
-    """
-    Fetch clicks using the Reports API.
-    Tries to find a click-related report and run it.
-    """
-    # First, list available reports to find a click report
-    reports = list_available_reports()
-    
-    # Look for click-related reports
-    click_reports = [r for r in reports if 'click' in r.get('Name', '').lower() and r.get('ApiAccessible', False)]
-    performance_reports = [r for r in reports if 'performance' in r.get('Name', '').lower() and r.get('ApiAccessible', False)]
-    
-    # Try click reports first, then performance reports
-    reports_to_try = click_reports + performance_reports
-    
-    if not reports_to_try:
-        print("⚠️  No accessible click or performance reports found")
-        return 0
-    
-    for report in reports_to_try[:3]:  # Try up to 3 reports
-        report_id = report.get('Id')
-        report_name = report.get('Name')
-        print(f"   🔄 Trying report: {report_name} (ID: {report_id})")
-        
-        try:
-            params = {
-                "StartDate": f"{start_date}T00:00:00Z",
-                "EndDate": f"{end_date}T23:59:59Z",
-                "CampaignId": CAMPAIGN_ID
-            }
-            
-            response = requests.get(
-                f"{BASE_URL}/Reports/{report_id}",
-                auth=get_auth(),
-                params=params,
-                headers={"Accept": "application/json"}
-            )
-            
-            if response.status_code != 200:
-                print(f"      ⚠️  Report returned {response.status_code}")
-                continue
-            
-            data = response.json()
-            records = data.get("Records", [])
-            
-            if records:
-                print(f"      ✅ Got {len(records)} records")
-                # Debug: show first record's keys
-                if records:
-                    print(f"      📋 Fields: {list(records[0].keys())[:10]}")
-                
-                # Try to sum clicks from various possible field names
-                total_clicks = 0
-                for record in records:
-                    clicks = (
-                        record.get("Clicks", 0) or 
-                        record.get("TotalClicks", 0) or 
-                        record.get("Click_Count", 0) or
-                        0
-                    )
-                    total_clicks += int(clicks) if clicks else 0
-                
-                if total_clicks > 0:
-                    print(f"      ✅ Total clicks: {total_clicks}")
-                    return total_clicks
-                    
-        except Exception as e:
-            print(f"      ⚠️  Error: {e}")
-            continue
-    
-    return 0
-
-
-def fetch_clicks_for_date_range(start_date: str, end_date: str) -> int:
-    """
-    Fetch total clicks for a date range using ClickExport endpoint.
-    This is an async endpoint - it schedules a job and we poll for results.
-    """
-    from datetime import datetime, timedelta
-    import time
-    
-    total_clicks = 0
-    
-    # ClickExport only supports one date at a time, so we need to loop through each day
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    
-    print(f"   🔄 Fetching clicks from {start_date} to {end_date}...")
-    
-    current_date = start
-    while current_date <= end:
-        date_str = current_date.strftime("%Y-%m-%d")
-        
-        try:
-            # Schedule the click export job
-            params = {
-                "Date": date_str,
-                "ResultFormat": "JSON"
-            }
-            
-            response = requests.get(
-                f"{BASE_URL}/Programs/{CAMPAIGN_ID}/ClickExport",
-                auth=get_auth(),
-                params=params,
-                headers={"Accept": "application/json"}
-            )
-            
-            if response.status_code == 403:
-                print(f"   ⚠️  ClickExport API returned 403 - no access")
-                return 0
-            
-            if response.status_code != 200:
-                print(f"   ⚠️  ClickExport returned {response.status_code} for {date_str}")
-                current_date += timedelta(days=1)
-                continue
-            
-            job_data = response.json()
-            print(f"   📋 ClickExport response for {date_str}: {list(job_data.keys())}")
-            
-            # Check if we got a job URI to poll
-            job_uri = job_data.get("ResultUri") or job_data.get("JobUri") or job_data.get("Uri")
-            
-            if not job_uri:
-                # Maybe the response contains clicks directly
-                clicks = job_data.get("Clicks", [])
-                if isinstance(clicks, list):
-                    day_clicks = len(clicks)
-                    total_clicks += day_clicks
-                    print(f"      {date_str}: {day_clicks} clicks (direct)")
-                current_date += timedelta(days=1)
-                continue
-            
-            # Poll for job completion (max 30 seconds per day)
-            print(f"      Polling job for {date_str}...")
-            for attempt in range(10):
-                time.sleep(3)
-                
-                # Handle relative vs absolute URI
-                if job_uri.startswith("/"):
-                    poll_url = f"https://api.impact.com{job_uri}"
-                else:
-                    poll_url = job_uri
-                
-                job_response = requests.get(
-                    poll_url,
-                    auth=get_auth(),
-                    headers={"Accept": "application/json"}
-                )
-                
-                if job_response.status_code == 200:
-                    result = job_response.json()
-                    status = result.get("Status", "").upper()
-                    
-                    if status == "COMPLETED":
-                        # Get the download URI and fetch clicks
-                        download_uri = result.get("DownloadUri") or result.get("ResultUri")
-                        if download_uri:
-                            if download_uri.startswith("/"):
-                                download_url = f"https://api.impact.com{download_uri}"
-                            else:
-                                download_url = download_uri
-                                
-                            download_response = requests.get(
-                                download_url,
-                                auth=get_auth(),
-                                headers={"Accept": "application/json"}
-                            )
-                            if download_response.status_code == 200:
-                                click_data = download_response.json()
-                                clicks = click_data.get("Clicks", [])
-                                if isinstance(clicks, list):
-                                    day_clicks = len(clicks)
-                                    total_clicks += day_clicks
-                                    print(f"      {date_str}: {day_clicks} clicks")
-                        break
-                    elif status in ["FAILED", "ERROR"]:
-                        print(f"      ⚠️  Job failed for {date_str}")
-                        break
-                    # else: still processing, keep polling
-                        
-        except Exception as e:
-            print(f"   ⚠️  Error fetching clicks for {date_str}: {e}")
-        
-        current_date += timedelta(days=1)
-    
-    print(f"   ✅ Total clicks: {total_clicks}")
-    return total_clicks
-
-
-def fetch_clicks_by_partner(start_date: str, end_date: str) -> Dict[str, int]:
-    """
-    Fetch click data. Returns total clicks since ClickExport doesn't easily aggregate by partner.
-    """
-    # Skip this - we'll get clicks in fetch_media_partner_stats
-    return {}
-
-
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
-    Fetch aggregated stats by media partner including clicks.
-    Tries Reports API first, then falls back to ClickExport.
+    Fetch aggregated stats by media partner including clicks and costs.
+    Note: Requires Reports API access which may not be available.
     """
-    print("   🔍 Attempting to fetch clicks via Reports API...")
-    
-    # Try Reports API first
-    total_clicks = fetch_clicks_from_report(start_date, end_date)
-    
-    # If Reports didn't work, try ClickExport
-    if total_clicks == 0:
-        print("   🔍 Trying ClickExport as fallback...")
-        total_clicks = fetch_clicks_for_date_range(start_date, end_date)
-    
-    return {"_total": {"clicks": total_clicks, "cost": 0}}
+    # Skip - Reports API returns 403 for mp_performance_by_day
+    # Click data not available without Reports API access
+    print("   ℹ️  Click data not available (Reports API access required)")
+    return {}
 
 
 # =============================================================================
@@ -383,13 +148,16 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     # Partner-level tracking
     partner_metrics = {}
     
-    # DEBUG: Track all event types we see
-    event_types_seen = {}
+    # DEBUG: Track statuses seen
+    statuses_seen = {}
     
     for action in actions:
         partner = action.get("MediaPartnerName", "Unknown")
         status = (action.get("State", "") or "").lower()
         payout = float(action.get("Payout", 0) or 0)
+        
+        # DEBUG: Track statuses
+        statuses_seen[status] = statuses_seen.get(status, 0) + 1
         
         # Initialize partner if needed
         if partner not in partner_metrics:
@@ -405,12 +173,8 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         partner_metrics[partner]["cost"] += payout
         
         # Check if this is a payment success action using Event Type ID
-        event_type_id = str(action.get("EventTypeId", "") or action.get("ActionTrackerId", "") or "")
-        event_type_name = (action.get("EventTypeName", "") or action.get("ActionTrackerName", "") or "").lower()
-        
-        # DEBUG: Track event types
-        key = f"{event_type_id}: {event_type_name}"
-        event_types_seen[key] = event_types_seen.get(key, 0) + 1
+        event_type_id = str(action.get("ActionTrackerId", "") or action.get("EventTypeId", "") or "")
+        event_type_name = (action.get("ActionTrackerName", "") or action.get("EventTypeName", "") or "").lower()
         
         is_payment_success = (
             event_type_id == PAYMENT_SUCCESS_EVENT_TYPE_ID or
@@ -452,10 +216,11 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     reversal_rate = (reversed_actions / total_actions * 100) if total_actions > 0 else 0
     cac = total_cost / payment_success_actions if payment_success_actions > 0 else None
     
-    # DEBUG: Print all event types found
-    print(f"\n🔍 DEBUG - Event Types Found (looking for ID '{PAYMENT_SUCCESS_EVENT_TYPE_ID}' or name containing '{PAYMENT_SUCCESS_EVENT_TYPE_NAME}'):")
-    for event_type, count in sorted(event_types_seen.items(), key=lambda x: -x[1])[:10]:
-        print(f"   {event_type} → {count} actions")
+    # DEBUG: Print statuses found
+    print(f"   🔍 DEBUG - Action Statuses Found:")
+    for status, count in sorted(statuses_seen.items(), key=lambda x: -x[1]):
+        print(f"      {status}: {count} actions")
+    print(f"   🔍 DEBUG - Reversed count: {reversed_actions}, Total: {total_actions}, Rate: {reversal_rate:.2f}%")
     
     return {
         "payment_success_actions": payment_success_actions,
@@ -642,56 +407,29 @@ def build_slack_message(
         },
         {"type": "divider"},
         
-        # Primary Metrics Section
+        # Key Metrics Section
         {
             "type": "section",
-            "text": {"type": "mrkdwn", "text": "*🎯 Primary Metrics*"}
+            "text": {"type": "mrkdwn", "text": "*🎯 Key Metrics*"}
         },
         {
             "type": "section",
             "fields": [
                 {
                     "type": "mrkdwn",
-                    "text": f"*Actions (Payment Success)*\n*{format_number(current['payment_success_actions'])}*\n{format_trend(changes['payment_success_actions'])} WoW"
+                    "text": f"*Actions (Payment Success)*\n*{format_number(current['payment_success_actions'])}*\nvs {format_number(changes['payment_success_actions']['previous'])} prev\n{format_trend(changes['payment_success_actions'])} WoW"
                 },
                 {
                     "type": "mrkdwn",
-                    "text": f"*Total Cost*\n*{format_currency(current['total_cost'])}*\n{format_trend(changes['total_cost'], is_inverse=True)} WoW"
+                    "text": f"*Total Cost*\n*{format_currency(current['total_cost'])}*\nvs {format_currency(changes['total_cost']['previous'])} prev\n{format_trend(changes['total_cost'], is_inverse=True)} WoW"
                 },
                 {
                     "type": "mrkdwn",
-                    "text": f"*CAC*\n*{format_currency(current['cac'])}*\n{format_trend(changes['cac'], is_inverse=True)} WoW"
+                    "text": f"*CAC*\n*{format_currency(current['cac'])}*\nvs {format_currency(changes['cac']['previous'])} prev\n{format_trend(changes['cac'], is_inverse=True)} WoW"
                 },
                 {
                     "type": "mrkdwn",
-                    "text": f"*Conversion Rate*\n*{format_pct(current['conversion_rate'])}*\n{format_trend(changes['conversion_rate'])} WoW"
-                }
-            ]
-        },
-        
-        # Secondary Metrics Section
-        {
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "*📈 Efficiency Metrics*"}
-        },
-        {
-            "type": "section",
-            "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Clicks*\n*{format_number(current['clicks'])}*\n{format_trend(changes['clicks'])} WoW"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*CPC*\n*{format_currency(current['cpc'])}*\n{format_trend(changes['cpc'], is_inverse=True)} WoW"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Reversal Rate*\n*{format_pct(current['reversal_rate'])}*\n{format_trend(changes['reversal_rate'], is_inverse=True)} WoW"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": " "  # Empty field for alignment
+                    "text": f"*Reversal Rate*\n*{format_pct(current['reversal_rate'])}*\nvs {format_pct(changes['reversal_rate']['previous'])} prev\n{format_trend(changes['reversal_rate'], is_inverse=True)} WoW"
                 }
             ]
         },
@@ -714,13 +452,6 @@ def build_slack_message(
             "text": {
                 "type": "mrkdwn",
                 "text": f"*Cost Movers:*\n{format_partner_movers(partner_drivers['cost'], 'cost')}"
-            }
-        },
-        {
-            "type": "section",
-            "text": {
-                "type": "mrkdwn",
-                "text": f"*Click Movers:*\n{format_partner_movers(partner_drivers['clicks'], 'clicks')}"
             }
         },
         {"type": "divider"},
