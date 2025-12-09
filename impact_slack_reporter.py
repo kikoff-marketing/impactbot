@@ -81,6 +81,52 @@ def get_week_range(weeks_back: int = 0) -> tuple[str, str]:
     return start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
 
 
+def fetch_actions_via_report(start_date: str, end_date: str) -> list[dict]:
+    """
+    Fetch actions via Advanced Action Listing report to get custom fields like Text1.
+    """
+    print(f"   🔍 Trying Advanced Action Listing report for custom fields...")
+    
+    params = {
+        "CampaignId": CAMPAIGN_ID,
+        "ActionDateStart": f"{start_date}T00:00:00Z",
+        "ActionDateEnd": f"{end_date}T23:59:59Z"
+    }
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/Reports/adv_action_listing_pm_only",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code != 200:
+            print(f"   ⚠️  Advanced Action Listing returned {response.status_code}: {response.text[:200]}")
+            return []
+        
+        data = response.json()
+        records = data.get("Records", [])
+        
+        if records:
+            print(f"   ✅ Got {len(records)} records from Advanced Action Listing")
+            # DEBUG: Show all field names from first record
+            print(f"   📋 DEBUG - Fields available: {list(records[0].keys())}")
+            # DEBUG: Show sample of Text fields if present
+            sample = records[0]
+            text_fields = {k: v for k, v in sample.items() if 'text' in k.lower() or 'Text' in k}
+            if text_fields:
+                print(f"   📋 DEBUG - Text fields found: {text_fields}")
+            else:
+                print(f"   📋 DEBUG - No Text fields found in response")
+        
+        return records
+        
+    except Exception as e:
+        print(f"   ⚠️  Error fetching Advanced Action Listing: {e}")
+        return []
+
+
 def fetch_actions(start_date: str, end_date: str) -> list[dict]:
     """Fetch all conversion actions within a date range."""
     actions = []
@@ -148,16 +194,10 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     # Partner-level tracking
     partner_metrics = {}
     
-    # DEBUG: Track statuses seen
-    statuses_seen = {}
-    
     for action in actions:
         partner = action.get("MediaPartnerName", "Unknown")
         status = (action.get("State", "") or "").lower()
         payout = float(action.get("Payout", 0) or 0)
-        
-        # DEBUG: Track statuses
-        statuses_seen[status] = statuses_seen.get(status, 0) + 1
         
         # Initialize partner if needed
         if partner not in partner_metrics:
@@ -216,12 +256,6 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     # Reversal rate = reversed Payment Success actions / total Payment Success actions
     reversal_rate = (reversed_actions / payment_success_actions * 100) if payment_success_actions > 0 else 0
     cac = total_cost / payment_success_actions if payment_success_actions > 0 else None
-    
-    # DEBUG: Print statuses found
-    print(f"   🔍 DEBUG - Action Statuses Found:")
-    for status, count in sorted(statuses_seen.items(), key=lambda x: -x[1]):
-        print(f"      {status}: {count} actions")
-    print(f"   🔍 DEBUG - Payment Success: {payment_success_actions}, Reversed: {reversed_actions}, Reversal Rate: {reversal_rate:.2f}%")
     
     return {
         "payment_success_actions": payment_success_actions,
@@ -508,6 +542,10 @@ def run_weekly_report():
     
     # Fetch current week data
     print("📥 Fetching current week data...")
+    
+    # DEBUG: Check what fields are available in Advanced Action Listing report
+    report_actions = fetch_actions_via_report(current_start, current_end)
+    
     current_actions = fetch_actions(current_start, current_end)
     current_partner_stats = fetch_media_partner_stats(current_start, current_end)
     print(f"   Found {len(current_actions)} actions, {len(current_partner_stats)} partners")
