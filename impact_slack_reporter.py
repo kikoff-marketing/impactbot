@@ -153,6 +153,9 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
         records = data.get("Records", [])
         
         if records:
+            # Debug: show first record to see actual values
+            print(f"   📋 Sample record: {records[0]}")
+            
             for record in records:
                 clicks = record.get("Clicks") or 0
                 total_clicks += int(clicks) if clicks else 0
