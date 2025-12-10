@@ -125,64 +125,101 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     """
     Fetch aggregated stats by media partner including clicks and costs.
     Uses the ReportExport endpoint with att_adv_performance_by_day_pm_only report.
+    This is an async endpoint - we need to poll for results.
     """
-    partner_stats = {}
+    import time
     
+    partner_stats = {}
     report_id = "att_adv_performance_by_day_pm_only"
     
-    # Try different parameter naming conventions
-    param_sets = [
-        {"START_DATE": start_date, "END_DATE": end_date, "CAMPAIGN_ID": CAMPAIGN_ID},
-        {"Start Date": start_date, "End Date": end_date, "Campaign": CAMPAIGN_ID},
-        {"startDate": start_date, "endDate": end_date, "campaignId": CAMPAIGN_ID},
-    ]
+    params = {
+        "START_DATE": start_date,
+        "END_DATE": end_date,
+        "CAMPAIGN_ID": CAMPAIGN_ID
+    }
     
-    for params in param_sets:
-        try:
-            print(f"   🔍 Trying ReportExport with params: {list(params.keys())}")
-            response = requests.get(
-                f"{BASE_URL}/ReportExport/{report_id}",
+    try:
+        print(f"   🔍 Requesting ReportExport...")
+        response = requests.get(
+            f"{BASE_URL}/ReportExport/{report_id}",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code != 200:
+            print(f"   ⚠️  ReportExport returned {response.status_code}: {response.text[:200]}")
+            return {}
+        
+        data = response.json()
+        status = data.get("Status")
+        result_uri = data.get("ResultUri")
+        
+        print(f"   Status: {status}, ResultUri: {result_uri}")
+        
+        if not result_uri:
+            print(f"   ⚠️  No ResultUri returned")
+            return {}
+        
+        # Poll for results (max 30 seconds)
+        max_attempts = 10
+        for attempt in range(max_attempts):
+            print(f"   Polling for results (attempt {attempt + 1}/{max_attempts})...")
+            
+            result_response = requests.get(
+                f"https://api.impact.com{result_uri}",
                 auth=get_auth(),
-                params=params,
                 headers={"Accept": "application/json"}
             )
             
-            print(f"   Response status: {response.status_code}")
-            
-            if response.status_code != 200:
-                print(f"   ⚠️  ReportExport returned {response.status_code}: {response.text[:300]}")
+            if result_response.status_code != 200:
+                print(f"   ⚠️  Result poll returned {result_response.status_code}")
+                time.sleep(3)
                 continue
             
-            data = response.json()
-            print(f"   Response keys: {list(data.keys())}")
+            result_data = result_response.json()
+            result_status = result_data.get("Status")
             
-            records = data.get("Records", [])
-            
-            if records:
-                print(f"   ✅ Got {len(records)} records!")
-                print(f"   📋 Fields: {list(records[0].keys())}")
-                print(f"   📋 Sample record: {records[0]}")
+            if result_status == "COMPLETE":
+                records = result_data.get("Records", [])
+                print(f"   ✅ Report complete! Got {len(records)} records")
                 
-                for record in records:
-                    partner = record.get("Media_Name") or record.get("MediaPartnerName") or record.get("Partner") or "Unknown"
-                    if partner not in partner_stats:
-                        partner_stats[partner] = {"clicks": 0, "cost": 0.0}
+                if records:
+                    print(f"   📋 Fields: {list(records[0].keys())}")
                     
-                    clicks = (
-                        record.get("Clicks") or 
-                        record.get("Total_Clicks") or 
-                        record.get("TotalClicks") or 
-                        0
-                    )
-                    partner_stats[partner]["clicks"] += int(clicks) if clicks else 0
+                    for record in records:
+                        partner = (
+                            record.get("Media_Name") or 
+                            record.get("MediaPartnerName") or 
+                            record.get("Media") or
+                            record.get("Partner") or 
+                            "Unknown"
+                        )
+                        if partner not in partner_stats:
+                            partner_stats[partner] = {"clicks": 0, "cost": 0.0}
+                        
+                        clicks = (
+                            record.get("Clicks") or 
+                            record.get("Total_Clicks") or 
+                            record.get("TotalClicks") or 
+                            0
+                        )
+                        partner_stats[partner]["clicks"] += int(clicks) if clicks else 0
                 
                 return partner_stats
                 
-        except Exception as e:
-            print(f"   ⚠️  Error: {e}")
-            continue
+            elif result_status == "ERROR":
+                print(f"   ⚠️  Report failed: {result_data}")
+                return {}
+            else:
+                # Still processing
+                time.sleep(3)
+        
+        print(f"   ⚠️  Report timed out after {max_attempts} attempts")
+        
+    except Exception as e:
+        print(f"   ⚠️  Error: {e}")
     
-    print(f"   ⚠️  No parameter combination returned records")
     return partner_stats
 
 
