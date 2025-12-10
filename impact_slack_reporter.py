@@ -361,13 +361,13 @@ def format_trend(change_data: Dict, is_inverse: bool = False) -> str:
     is_positive_change = pct > 0
     is_good = is_positive_change if not is_inverse else not is_positive_change
     
-    # Use chart emojis - up for positive change, down for negative
+    # Use colored circle emojis
     if abs(pct) < 1:
         emoji = ""
-    elif is_positive_change:
-        emoji = ":chart_with_upwards_trend:" if is_good else ":chart_with_upwards_trend:"
+    elif is_good:
+        emoji = ":large_green_circle:"
     else:
-        emoji = ":chart_with_downwards_trend:" if not is_good else ":chart_with_downwards_trend:"
+        emoji = ":red_circle:"
     
     sign = "+" if pct > 0 else ""
     return f"{emoji} *{sign}{pct:.1f}%*"
@@ -495,7 +495,7 @@ def build_slack_message(
         {
             "type": "context",
             "elements": [
-                {"type": "mrkdwn", "text": ":chart_with_upwards_trend: = increase | :chart_with_downwards_trend: = decrease | Data from Impact.com"}
+                {"type": "mrkdwn", "text": ":large_green_circle: = favorable change | :red_circle: = unfavorable change | Data from Impact.com"}
             ]
         }
     ])
@@ -563,7 +563,7 @@ def run_weekly_report():
         hist_metrics = process_metrics(hist_actions, {})
         top_partners = get_top_partners(hist_metrics, n=10)
         historical_tops.append(top_partners)
-        print(f"      Week {weeks_back} back ({hist_start}): Top 10 = {top_partners[:5]}...")  # Show first 5
+        print(f"      Week {weeks_back} back ({hist_start}): {top_partners}")
     print(f"   Analyzed {len(historical_tops)} historical weeks")
     
     # Process metrics
