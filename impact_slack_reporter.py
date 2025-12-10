@@ -124,61 +124,123 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
     Fetch aggregated stats including clicks.
-    Uses the Reports endpoint for Performance by Day report.
+    1. List all reports to find Performance by Day report ID
+    2. Use ReportExport endpoint to export the report
     """
+    import time
+    
     total_clicks = 0
-    report_id = "att_adv_performance_by_day_pm_only"
+    report_id = None
     
-    # Try different parameter combinations
-    param_sets = [
-        # With timestamps
-        {"START_DATE": f"{start_date}T00:00:00Z", "END_DATE": f"{end_date}T23:59:59Z", "CAMPAIGN_ID": CAMPAIGN_ID},
-        # Without campaign filter
-        {"START_DATE": start_date, "END_DATE": end_date},
-        # Different date format
-        {"Start Date": start_date, "End Date": end_date},
-    ]
-    
-    for params in param_sets:
-        try:
-            print(f"   🔍 Trying params: {list(params.keys())}")
-            response = requests.get(
-                f"{BASE_URL}/Reports/{report_id}",
-                auth=get_auth(),
-                params=params,
-                headers={"Accept": "application/json"}
-            )
-            
-            if response.status_code != 200:
-                print(f"   ⚠️  Status {response.status_code}")
-                continue
-            
+    # Step 1: List all reports to find the correct one
+    try:
+        print(f"   🔍 Listing available reports...")
+        response = requests.get(
+            f"{BASE_URL}/Reports",
+            auth=get_auth(),
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code == 200:
             data = response.json()
-            records = data.get("Records", [])
+            reports = data.get("Reports", [])
             
-            if records:
-                # Check if first record has actual data
-                sample = records[0]
-                clicks_value = sample.get("Clicks", "")
-                
-                print(f"   📋 Sample Clicks value: '{clicks_value}' (type: {type(clicks_value).__name__})")
-                
-                if clicks_value and clicks_value != "":
-                    for record in records:
-                        clicks = record.get("Clicks") or 0
-                        if clicks:
-                            total_clicks += int(clicks)
-                    
-                    print(f"   ✅ Total clicks: {total_clicks:,}")
-                    return {"_total": {"clicks": total_clicks, "cost": 0}}
-                else:
-                    print(f"   ⚠️  Records have empty values")
-                    
-        except Exception as e:
-            print(f"   ⚠️  Error: {e}")
+            # Find Performance by Day report
+            perf_reports = [r for r in reports if "performance" in r.get("Name", "").lower() and "day" in r.get("Name", "").lower()]
+            
+            print(f"   📋 Found {len(reports)} total reports")
+            print(f"   📋 Performance by Day reports:")
+            for r in perf_reports:
+                rid = r.get('Id')
+                print(f"      - {r.get('Name')} (ID: {rid}, ApiAccessible: {r.get('ApiAccessible')})")
+                if r.get('ApiAccessible') and not report_id:
+                    report_id = rid
+        else:
+            print(f"   ⚠️  List reports returned {response.status_code}")
+            
+    except Exception as e:
+        print(f"   ⚠️  Error listing reports: {e}")
     
-    print(f"   ⚠️  No click data available from report")
-    return {"_total": {"clicks": 0, "cost": 0}}
+    if not report_id:
+        report_id = "att_adv_performance_by_day_pm_only"  # Fallback
+    
+    # Step 2: Use ReportExport endpoint
+    print(f"   🔍 Exporting report: {report_id}")
+    
+    params = {
+        "START_DATE": start_date,
+        "END_DATE": end_date,
+    }
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/ReportExport/{report_id}",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
+        
+        print(f"   Response status: {response.status_code}")
+        
+        if response.status_code != 200:
+            print(f"   ⚠️  ReportExport returned {response.status_code}: {response.text[:200]}")
+            return {}
+        
+        data = response.json()
+        print(f"   Response keys: {list(data.keys())}")
+        
+        # Check if it's an async job
+        if "ResultUri" in data:
+            result_uri = data.get("ResultUri")
+            print(f"   📋 Async job - polling ResultUri: {result_uri}")
+            
+            # Poll for results (max 30 seconds)
+            for attempt in range(10):
+                print(f"   Polling (attempt {attempt + 1}/10)...")
+                
+                result_response = requests.get(
+                    f"https://api.impact.com{result_uri}",
+                    auth=get_auth(),
+                    headers={"Accept": "application/json"}
+                )
+                
+                print(f"   Poll status: {result_response.status_code}")
+                
+                if result_response.status_code == 200:
+                    result_data = result_response.json()
+                    print(f"   Poll response keys: {list(result_data.keys())}")
+                    
+                    if result_data.get("Status") == "COMPLETE":
+                        records = result_data.get("Records", [])
+                        if records:
+                            print(f"   ✅ Got {len(records)} records")
+                            print(f"   📋 Fields: {list(records[0].keys())}")
+                            print(f"   📋 Sample: {records[0]}")
+                        break
+                
+                time.sleep(3)
+        
+        # Check if records are directly in response
+        records = data.get("Records", [])
+        if records:
+            sample = records[0]
+            print(f"   📋 Fields: {list(sample.keys())}")
+            print(f"   📋 Sample: {sample}")
+            
+            for record in records:
+                clicks = record.get("Clicks") or record.get("clicks") or 0
+                if clicks and clicks != "":
+                    total_clicks += int(float(clicks))
+            
+            if total_clicks > 0:
+                print(f"   ✅ Total clicks: {total_clicks:,}")
+                return {"_total": {"clicks": total_clicks, "cost": 0}}
+                
+    except Exception as e:
+        print(f"   ⚠️  Error: {e}")
+    
+    print(f"   ⚠️  No click data available")
+    return {}
 
 
 # =============================================================================
@@ -501,19 +563,6 @@ def build_slack_message(
                 {
                     "type": "mrkdwn",
                     "text": f"*Reversal Rate*\n*{format_pct(current['reversal_rate'])}*\nvs {format_pct(changes['reversal_rate']['previous'])} prev\n{format_trend(changes['reversal_rate'], is_inverse=True)} WoW"
-                }
-            ]
-        },
-        {
-            "type": "section",
-            "fields": [
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Clicks*\n*{format_number(current['clicks'])}*\nvs {format_number(changes['clicks']['previous'])} prev\n{format_trend(changes['clicks'])} WoW"
-                },
-                {
-                    "type": "mrkdwn",
-                    "text": f"*Conversion Rate*\n*{format_pct(current['conversion_rate'])}*\nvs {format_pct(changes['conversion_rate']['previous'])} prev\n{format_trend(changes['conversion_rate'])} WoW"
                 }
             ]
         },
