@@ -124,10 +124,60 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
     Fetch aggregated stats by media partner including clicks and costs.
-    Note: Requires Reports API access which is not currently available.
+    Uses the ReportExport endpoint with att_adv_performance_by_day_pm_only report.
     """
-    # Reports API returns 403 - click data not available
-    return {}
+    partner_stats = {}
+    
+    report_id = "att_adv_performance_by_day_pm_only"
+    
+    # ReportExport endpoint with date filters
+    params = {
+        "START_DATE": start_date,
+        "END_DATE": end_date,
+        "CAMPAIGN_ID": CAMPAIGN_ID
+    }
+    
+    try:
+        print(f"   🔍 Fetching clicks via ReportExport...")
+        response = requests.get(
+            f"{BASE_URL}/ReportExport/{report_id}",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code != 200:
+            print(f"   ⚠️  ReportExport returned {response.status_code}: {response.text[:200]}")
+            return {}
+        
+        data = response.json()
+        records = data.get("Records", [])
+        
+        if records:
+            print(f"   ✅ Got {len(records)} records from ReportExport")
+            # Debug: show fields from first record
+            print(f"   📋 Fields: {list(records[0].keys())[:10]}...")
+            
+            for record in records:
+                partner = record.get("Media_Name") or record.get("MediaPartnerName") or record.get("Partner") or "Unknown"
+                if partner not in partner_stats:
+                    partner_stats[partner] = {"clicks": 0, "cost": 0.0}
+                
+                # Try different field names for clicks
+                clicks = (
+                    record.get("Clicks") or 
+                    record.get("Total_Clicks") or 
+                    record.get("TotalClicks") or 
+                    0
+                )
+                partner_stats[partner]["clicks"] += int(clicks) if clicks else 0
+        else:
+            print(f"   ⚠️  ReportExport returned 0 records")
+            
+    except Exception as e:
+        print(f"   ⚠️  Error fetching ReportExport: {e}")
+    
+    return partner_stats
 
 
 # =============================================================================
