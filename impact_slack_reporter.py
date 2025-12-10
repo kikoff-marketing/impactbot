@@ -134,6 +134,31 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
 # DATA PROCESSING
 # =============================================================================
 
+def get_top_partners(metrics: Dict, n: int = 10) -> list[str]:
+    """Get top N partners by payment success actions."""
+    partner_metrics = metrics.get("partner_metrics", {})
+    sorted_partners = sorted(
+        partner_metrics.items(),
+        key=lambda x: x[1].get("payment_success", 0),
+        reverse=True
+    )
+    return [p[0] for p in sorted_partners[:n] if p[1].get("payment_success", 0) > 0]
+
+
+def identify_new_top_partners(current_top: list[str], historical_tops: list[list[str]]) -> list[str]:
+    """
+    Identify partners in current top 10 that weren't in top 10 for any of the past weeks.
+    """
+    # Combine all historical top partners
+    historical_set = set()
+    for week_top in historical_tops:
+        historical_set.update(week_top)
+    
+    # Find new partners
+    new_partners = [p for p in current_top if p not in historical_set]
+    return new_partners
+
+
 def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict[str, Any]:
     """
     Process raw data into the key metrics we care about.
@@ -376,12 +401,14 @@ def build_slack_message(
     changes: Dict,
     partner_drivers: Dict,
     date_range: tuple[str, str],
-    prev_date_range: tuple[str, str]
+    prev_date_range: tuple[str, str],
+    new_top_partners: list[str] = None
 ) -> Dict[str, Any]:
     """Build Slack Block Kit message."""
     
     start_date, end_date = date_range
     prev_start, prev_end = prev_date_range
+    partner_metrics = current.get("partner_metrics", {})
     
     blocks = [
         {
@@ -447,6 +474,23 @@ def build_slack_message(
                 "text": f"*Cost Movers:*\n{format_partner_movers(partner_drivers['cost'], 'cost')}"
             }
         },
+    ]
+    
+    # Add new top partners callout if any
+    if new_top_partners:
+        partner_list = ", ".join([
+            f"*{p}* ({partner_metrics.get(p, {}).get('payment_success', 0):,} actions)" 
+            for p in new_top_partners
+        ])
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": f"🆕 *New Top 10 Partner(s):* {partner_list}\n_First time in top 10 for Payment Success in past 4 weeks_"
+            }
+        })
+    
+    blocks.extend([
         {"type": "divider"},
         {
             "type": "context",
@@ -454,7 +498,7 @@ def build_slack_message(
                 {"type": "mrkdwn", "text": ":chart_with_upwards_trend: = increase | :chart_with_downwards_trend: = decrease | Data from Impact.com"}
             ]
         }
-    ]
+    ])
     
     return {"blocks": blocks}
 
@@ -510,10 +554,26 @@ def run_weekly_report():
     previous_partner_stats = fetch_media_partner_stats(previous_start, previous_end)
     print(f"   Found {len(previous_actions)} actions")
     
+    # Fetch historical data (weeks 2-4 back) for new partner detection
+    print("📥 Fetching historical data for new partner detection...")
+    historical_tops = []
+    for weeks_back in range(1, 5):  # weeks 1-4 back
+        hist_start, hist_end = get_week_range(weeks_back=weeks_back)
+        hist_actions = fetch_actions(hist_start, hist_end)
+        hist_metrics = process_metrics(hist_actions, {})
+        historical_tops.append(get_top_partners(hist_metrics, n=10))
+    print(f"   Analyzed {len(historical_tops)} historical weeks")
+    
     # Process metrics
     print("🔄 Processing metrics...")
     current_metrics = process_metrics(current_actions, current_partner_stats)
     previous_metrics = process_metrics(previous_actions, previous_partner_stats)
+    
+    # Identify new top 10 partners
+    current_top_10 = get_top_partners(current_metrics, n=10)
+    new_top_partners = identify_new_top_partners(current_top_10, historical_tops)
+    if new_top_partners:
+        print(f"   🆕 New top 10 partners: {', '.join(new_top_partners)}")
     
     # Calculate changes
     changes = calculate_changes(current_metrics, previous_metrics)
@@ -542,7 +602,8 @@ def run_weekly_report():
         changes,
         partner_drivers,
         (current_start, current_end),
-        (previous_start, previous_end)
+        (previous_start, previous_end),
+        new_top_partners
     )
     
     send_to_slack(message)
