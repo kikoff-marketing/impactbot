@@ -130,14 +130,15 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     total_clicks = 0
     report_id = "att_adv_performance_by_day_pm_only"
     
+    # Try with SUBAID (program ID) - required per docs
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
-        "CAMPAIGN_ID": CAMPAIGN_ID,
+        "SUBAID": CAMPAIGN_ID,
     }
     
     try:
-        print(f"   🔍 Calling ReportExport...")
+        print(f"   🔍 Calling ReportExport with SUBAID={CAMPAIGN_ID}...")
         response = requests.get(
             f"{BASE_URL}/ReportExport/{report_id}",
             auth=get_auth(),
@@ -146,7 +147,7 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
         )
         
         if response.status_code != 200:
-            print(f"   ⚠️  ReportExport failed: {response.status_code}")
+            print(f"   ⚠️  ReportExport failed: {response.status_code} - {response.text[:200]}")
             return {}
         
         data = response.json()
@@ -192,6 +193,9 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                         content_type = dl_response.headers.get("Content-Type", "")
                         print(f"   Content-Type: {content_type}")
                         
+                        # Show raw response for debugging
+                        print(f"   Raw response (first 500 chars): {dl_response.text[:500]}")
+                        
                         if "json" in content_type:
                             dl_data = dl_response.json()
                             records = dl_data.get("Records", [])
@@ -213,7 +217,8 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                                     total_clicks += int(float(clicks))
                             
                             print(f"   ✅ Total clicks: {total_clicks:,}")
-                            return {"_total": {"clicks": total_clicks, "cost": 0}}
+                            if total_clicks > 0:
+                                return {"_total": {"clicks": total_clicks, "cost": 0}}
                     else:
                         print(f"   ⚠️  Download failed: {dl_response.text[:200]}")
                 break
