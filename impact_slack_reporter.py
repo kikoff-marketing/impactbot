@@ -128,9 +128,37 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     import time
     
     total_clicks = 0
+    partner_clicks = {}
+    
+    # First, list reports to find partner-level report
+    try:
+        print(f"   🔍 Listing reports to find partner-level data...")
+        response = requests.get(
+            f"{BASE_URL}/Reports",
+            auth=get_auth(),
+            headers={"Accept": "application/json"}
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            reports = data.get("Reports", [])
+            
+            # Find partner/media performance reports
+            partner_reports = [r for r in reports if 
+                ("partner" in r.get("Name", "").lower() or 
+                 "media" in r.get("Name", "").lower()) and
+                "performance" in r.get("Name", "").lower() and
+                r.get("ApiAccessible")]
+            
+            print(f"   📋 Partner/Media Performance reports:")
+            for r in partner_reports[:5]:
+                print(f"      - {r.get('Name')} (ID: {r.get('Id')})")
+    except Exception as e:
+        print(f"   ⚠️  Error listing reports: {e}")
+    
+    # Use the daily report for now
     report_id = "att_adv_performance_by_day_pm_only"
     
-    # SUBAID is required per docs for program filtering
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
