@@ -520,6 +520,7 @@ def build_slack_message(
             "type": "section",
             "text": {"type": "mrkdwn", "text": "*🎯 Key Metrics*"}
         },
+        # Row 1: Actions & Clicks
         {
             "type": "section",
             "fields": [
@@ -530,7 +531,13 @@ def build_slack_message(
                 {
                     "type": "mrkdwn",
                     "text": f"*Clicks*\n*{format_number(current['clicks'])}*\nvs {format_number(changes['clicks']['previous'])} prev\n{format_trend(changes['clicks'])} WoW"
-                },
+                }
+            ]
+        },
+        # Row 2: Conversion Rate & Total Cost
+        {
+            "type": "section",
+            "fields": [
                 {
                     "type": "mrkdwn",
                     "text": f"*Conversion Rate*\n*{format_pct(current['conversion_rate'])}*\nvs {format_pct(changes['conversion_rate']['previous'])} prev\n{format_trend(changes['conversion_rate'])} WoW"
@@ -541,6 +548,7 @@ def build_slack_message(
                 }
             ]
         },
+        # Row 3: CAC & Reversal Rate
         {
             "type": "section",
             "fields": [
