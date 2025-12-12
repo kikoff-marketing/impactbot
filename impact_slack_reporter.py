@@ -123,16 +123,13 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
-    Fetch aggregated stats including clicks.
-    Uses ReportExport endpoint - job queues but requires Jobs API access to download.
+    Fetch aggregated stats including clicks via ReportExport.
     """
     import time
     
     total_clicks = 0
     report_id = "att_adv_performance_by_day_pm_only"
     
-    # Use uppercase parameter names - these returned 200 before
-    # The issue was Jobs/Download returning 403, not the ReportExport call
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
@@ -148,73 +145,88 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
             headers={"Accept": "application/json"}
         )
         
-        print(f"   Status: {response.status_code}")
-        
         if response.status_code != 200:
-            print(f"   ⚠️  {response.text[:200]}")
+            print(f"   ⚠️  ReportExport failed: {response.status_code}")
             return {}
         
         data = response.json()
-        print(f"   Response keys: {list(data.keys())}")
-        
-        # Try QueuedUri first (Jobs endpoint for status)
         queued_uri = data.get("QueuedUri")
-        result_uri = data.get("ResultUri")
         
-        # QueuedUri format: /Advertisers/.../Jobs/{id}
-        # ResultUri format: /Advertisers/.../Jobs/{id}/Download
+        if not queued_uri:
+            print(f"   ⚠️  No QueuedUri returned")
+            return {}
         
-        if queued_uri:
-            print(f"   🔄 Checking job status via QueuedUri: {queued_uri}")
+        # Poll for job completion
+        for attempt in range(15):
+            status_response = requests.get(
+                f"https://api.impact.com{queued_uri}",
+                auth=get_auth(),
+                headers={"Accept": "application/json"}
+            )
             
-            for attempt in range(10):
-                status_response = requests.get(
-                    f"https://api.impact.com{queued_uri}",
-                    auth=get_auth(),
-                    headers={"Accept": "application/json"}
-                )
-                
-                print(f"   Attempt {attempt + 1}/10 - Status: {status_response.status_code}")
-                
-                if status_response.status_code == 200:
-                    status_data = status_response.json()
-                    print(f"   Job data: {status_data}")
+            if status_response.status_code != 200:
+                print(f"   ⚠️  Job status check failed: {status_response.status_code}")
+                time.sleep(2)
+                continue
+            
+            job_data = status_response.json()
+            job_status = job_data.get("Status", "").upper()
+            
+            print(f"   Attempt {attempt + 1}/15 - Status: {job_status}")
+            
+            if job_status == "COMPLETED":
+                # Download the results
+                result_uri = job_data.get("ResultUri")
+                if result_uri:
+                    print(f"   📥 Downloading results...")
+                    dl_response = requests.get(
+                        f"https://api.impact.com{result_uri}",
+                        auth=get_auth(),
+                        headers={"Accept": "application/json"}
+                    )
                     
-                    job_status = status_data.get("Status")
-                    if job_status == "COMPLETE":
-                        # Try to download
-                        download_uri = status_data.get("DownloadUri") or result_uri
-                        if download_uri:
-                            print(f"   📥 Downloading from: {download_uri}")
-                            dl_response = requests.get(
-                                f"https://api.impact.com{download_uri}",
-                                auth=get_auth(),
-                                headers={"Accept": "application/json"}
-                            )
-                            print(f"   Download status: {dl_response.status_code}")
-                            if dl_response.status_code == 200:
-                                records = dl_response.json().get("Records", [])
-                                if records:
-                                    print(f"   ✅ Got {len(records)} records")
-                                    for record in records:
-                                        clicks = record.get("Clicks") or 0
-                                        if clicks:
-                                            total_clicks += int(float(clicks))
-                                    return {"_total": {"clicks": total_clicks, "cost": 0}}
-                        break
-                    elif job_status == "ERROR":
-                        print(f"   ❌ Job failed")
-                        break
-                elif status_response.status_code == 403:
-                    print(f"   ⚠️  403 - Jobs API access denied")
-                    break
+                    print(f"   Download status: {dl_response.status_code}")
+                    
+                    if dl_response.status_code == 200:
+                        # Check content type - might be CSV or JSON
+                        content_type = dl_response.headers.get("Content-Type", "")
+                        print(f"   Content-Type: {content_type}")
+                        
+                        if "json" in content_type:
+                            dl_data = dl_response.json()
+                            records = dl_data.get("Records", [])
+                        else:
+                            # Parse CSV
+                            import csv
+                            import io
+                            reader = csv.DictReader(io.StringIO(dl_response.text))
+                            records = list(reader)
+                        
+                        if records:
+                            print(f"   ✅ Got {len(records)} records")
+                            print(f"   📋 Fields: {list(records[0].keys())}")
+                            print(f"   📋 Sample: {records[0]}")
+                            
+                            for record in records:
+                                clicks = record.get("Clicks") or record.get("clicks") or 0
+                                if clicks and str(clicks).strip():
+                                    total_clicks += int(float(clicks))
+                            
+                            print(f"   ✅ Total clicks: {total_clicks:,}")
+                            return {"_total": {"clicks": total_clicks, "cost": 0}}
+                    else:
+                        print(f"   ⚠️  Download failed: {dl_response.text[:200]}")
+                break
                 
-                time.sleep(3)
+            elif job_status in ["FAILED", "CANCELLED", "ERROR"]:
+                print(f"   ❌ Job failed: {job_data.get('StatusMessage')}")
+                break
+            
+            time.sleep(2)
                 
     except Exception as e:
         print(f"   ⚠️  Error: {e}")
     
-    print(f"   ⚠️  No click data available (Jobs API access required)")
     return {}
 
 
