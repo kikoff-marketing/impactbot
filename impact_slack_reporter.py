@@ -177,18 +177,20 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
         )
         
         if response.status_code != 200:
-            print(f"   ⚠️  ReportExport failed: {response.status_code}")
+            print(f"   ⚠️  ReportExport failed: {response.status_code} - {response.text[:200]}")
             return {}
         
         data = response.json()
         queued_uri = data.get("QueuedUri")
         
         if not queued_uri:
-            print(f"   ⚠️  No QueuedUri returned")
+            print(f"   ⚠️  No QueuedUri returned. Response: {data}")
             return {}
         
-        # Poll for job completion
-        for attempt in range(15):
+        print(f"   ⏳ Job queued, polling for completion...")
+        
+        # Poll for job completion (increased to 20 attempts = 40 seconds max)
+        for attempt in range(20):
             status_response = requests.get(
                 f"https://api.impact.com{queued_uri}",
                 auth=get_auth(),
@@ -196,11 +198,15 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
             )
             
             if status_response.status_code != 200:
+                print(f"   ⚠️  Poll attempt {attempt + 1}/20 failed: {status_response.status_code}")
                 time.sleep(2)
                 continue
             
             job_data = status_response.json()
             job_status = job_data.get("Status", "").upper()
+            
+            if attempt % 5 == 0:  # Log every 5th attempt
+                print(f"   ⏳ Attempt {attempt + 1}/20 - Status: {job_status}")
             
             if job_status == "COMPLETED":
                 # Download the results
@@ -250,6 +256,12 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                             
                             if total_clicks > 0:
                                 return partner_clicks
+                        else:
+                            print(f"   ⚠️  No records in download response")
+                    else:
+                        print(f"   ⚠️  Download failed: {dl_response.status_code} - {dl_response.text[:200]}")
+                else:
+                    print(f"   ⚠️  No ResultUri in completed job")
                 break
                 
             elif job_status in ["FAILED", "CANCELLED", "ERROR"]:
@@ -257,6 +269,16 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                 break
             
             time.sleep(2)
+        else:
+            # Loop completed without breaking - timeout
+            print(f"   ⚠️  Job timed out after 20 attempts. Last status: {job_status}")
+                
+    except Exception as e:
+        print(f"   ⚠️  Error fetching clicks: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return {}
                 
     except Exception as e:
         print(f"   ⚠️  Error: {e}")
