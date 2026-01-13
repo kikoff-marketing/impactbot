@@ -350,14 +350,13 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         )
         
         if is_payment_success:
-            # Check for reversals - exclude reversed/rejected from Payment Success count
+            payment_success_actions += 1
+            partner_metrics[partner]["payment_success"] += 1
+            
+            # Check for reversals - only count reversed Payment Success actions
             if status in ["reversed", "rejected"]:
                 reversed_actions += 1
                 partner_metrics[partner]["reversed"] += 1
-            else:
-                # Only count non-reversed Payment Success actions
-                payment_success_actions += 1
-                partner_metrics[partner]["payment_success"] += 1
     
     # Calculate total clicks and cost from partner stats (if available)
     # Exclude _total key to avoid double counting
@@ -383,9 +382,8 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     # Note: CPC and Conversion Rate require click data from Reports API
     cpc = total_cost / total_clicks if total_clicks > 0 else None
     conversion_rate = (payment_success_actions / total_clicks * 100) if total_clicks > 0 else None
-    # Reversal rate = reversed Payment Success actions / total Payment Success actions (including reversed)
-    total_payment_success_including_reversed = payment_success_actions + reversed_actions
-    reversal_rate = (reversed_actions / total_payment_success_including_reversed * 100) if total_payment_success_including_reversed > 0 else 0
+    # Reversal rate = reversed Payment Success actions / total Payment Success actions
+    reversal_rate = (reversed_actions / payment_success_actions * 100) if payment_success_actions > 0 else 0
     cac = total_cost / payment_success_actions if payment_success_actions > 0 else None
     
     return {
