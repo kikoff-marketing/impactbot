@@ -324,10 +324,16 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     # Partner-level tracking
     partner_metrics = {}
     
+    # Debug: track statuses
+    status_counts = {}
+    
     for action in actions:
         partner = action.get("MediaPartnerName", "Unknown")
         status = (action.get("State", "") or "").lower()
         payout = float(action.get("Payout", 0) or 0)
+        
+        # Debug: count statuses
+        status_counts[status] = status_counts.get(status, 0) + 1
         
         # Initialize partner if needed
         if partner not in partner_metrics:
@@ -350,6 +356,9 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         if status in ["reversed", "rejected"]:
             reversed_actions += 1
             partner_metrics[partner]["reversed"] += 1
+    
+    # Debug: print status breakdown
+    print(f"   📊 Action statuses: {status_counts}")
     
     # Calculate total clicks and cost from partner stats (if available)
     # Exclude _total key to avoid double counting
