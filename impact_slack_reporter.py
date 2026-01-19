@@ -346,19 +346,20 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         
         total_actions += 1
         partner_metrics[partner]["total_actions"] += 1
-        partner_metrics[partner]["cost"] += payout
         
-        # All actions from API are Payment Success (filtered at fetch level)
-        payment_success_actions += 1
-        partner_metrics[partner]["payment_success"] += 1
-        
-        # Check for reversals
+        # Check for reversals - exclude from Payment Success count to match platform
         if status in ["reversed", "rejected"]:
             reversed_actions += 1
             partner_metrics[partner]["reversed"] += 1
+        else:
+            # Only count non-reversed actions as Payment Success
+            payment_success_actions += 1
+            partner_metrics[partner]["payment_success"] += 1
+            partner_metrics[partner]["cost"] += payout
     
     # Debug: print status breakdown
     print(f"   📊 Action statuses: {status_counts}")
+    print(f"   📊 Counted as Payment Success: {payment_success_actions} (excluding {reversed_actions} reversed)")
     
     # Calculate total clicks and cost from partner stats (if available)
     # Exclude _total key to avoid double counting
