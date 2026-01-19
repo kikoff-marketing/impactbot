@@ -109,7 +109,7 @@ def get_month_range(months_back: int = 1) -> tuple[str, str]:
 
 
 def fetch_actions(start_date: str, end_date: str) -> list[dict]:
-    """Fetch all conversion actions within a date range."""
+    """Fetch all Payment Success actions within a date range."""
     actions = []
     page = 1
     page_size = 2000  # API minimum is 2000, max is 20000
@@ -117,6 +117,7 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
     while True:
         params = {
             "CampaignId": CAMPAIGN_ID,
+            "ActionTrackerId": PAYMENT_SUCCESS_EVENT_TYPE_ID,  # Filter to Payment Success only
             "ActionDateStart": f"{start_date}T00:00:00Z",
             "ActionDateEnd": f"{end_date}T23:59:59Z",
             "PageSize": page_size,
@@ -313,6 +314,7 @@ def identify_new_top_partners(current_top: list[str], historical_tops: list[list
 def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict[str, Any]:
     """
     Process raw data into the key metrics we care about.
+    Note: actions parameter now contains only Payment Success actions (filtered at API level)
     """
     # Initialize counters
     payment_success_actions = 0
@@ -340,23 +342,14 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         partner_metrics[partner]["total_actions"] += 1
         partner_metrics[partner]["cost"] += payout
         
-        # Check if this is a payment success action using Event Type ID
-        event_type_id = str(action.get("ActionTrackerId", "") or action.get("EventTypeId", "") or "")
-        event_type_name = (action.get("ActionTrackerName", "") or action.get("EventTypeName", "") or "").lower()
+        # All actions from API are Payment Success (filtered at fetch level)
+        payment_success_actions += 1
+        partner_metrics[partner]["payment_success"] += 1
         
-        is_payment_success = (
-            event_type_id == PAYMENT_SUCCESS_EVENT_TYPE_ID or
-            PAYMENT_SUCCESS_EVENT_TYPE_NAME.lower() in event_type_name
-        )
-        
-        if is_payment_success:
-            payment_success_actions += 1
-            partner_metrics[partner]["payment_success"] += 1
-            
-            # Check for reversals - only count reversed Payment Success actions
-            if status in ["reversed", "rejected"]:
-                reversed_actions += 1
-                partner_metrics[partner]["reversed"] += 1
+        # Check for reversals
+        if status in ["reversed", "rejected"]:
+            reversed_actions += 1
+            partner_metrics[partner]["reversed"] += 1
     
     # Calculate total clicks and cost from partner stats (if available)
     # Exclude _total key to avoid double counting
