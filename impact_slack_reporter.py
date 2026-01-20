@@ -524,14 +524,22 @@ def identify_partner_drivers(
             "prev_cvr": prev_cvr,
         })
     
-    # Sort by absolute change to find biggest movers
-    actions_movers = sorted(partner_changes, key=lambda x: abs(x["actions_change"]), reverse=True)[:3]
-    
-    # Determine overall trend direction for CAC and CVR
+    # Determine overall trend direction for Actions, CAC and CVR
+    overall_actions_change = total_current_actions - total_prev_actions
     overall_cac_change = (total_current_cost / total_current_actions if total_current_actions > 0 else 0) - \
                          (total_prev_cost / total_prev_actions if total_prev_actions > 0 else 0)
     overall_cvr_change = (total_current_actions / total_current_clicks * 100 if total_current_clicks > 0 else 0) - \
                          (total_prev_actions / total_prev_clicks * 100 if total_prev_clicks > 0 else 0)
+    
+    # Actions movers - show partners who contributed most to the OVERALL trend direction
+    # If Actions went up overall, show partners with biggest positive change
+    # If Actions went down overall, show partners with biggest negative change
+    if overall_actions_change >= 0:
+        # Actions increased - show partners who drove it UP
+        actions_movers = sorted(partner_changes, key=lambda x: x["actions_change"], reverse=True)[:3]
+    else:
+        # Actions decreased - show partners who drove it DOWN
+        actions_movers = sorted(partner_changes, key=lambda x: x["actions_change"])[:3]
     
     # CAC movers - show partners who contributed most to the OVERALL trend direction
     # If CAC went up overall, show partners with biggest positive cac_impact
