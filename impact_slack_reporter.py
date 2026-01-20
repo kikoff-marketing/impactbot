@@ -151,12 +151,13 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
-    Fetch aggregated stats including clicks by partner via ReportExport.
+    Fetch aggregated stats including clicks and cost by partner via ReportExport.
     Uses Performance by Partner report for partner-level breakdown.
     """
     import time
     
     total_clicks = 0
+    total_cost = 0
     partner_clicks = {}
     
     # Use Performance by Partner report for partner-level data
@@ -248,12 +249,16 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                                 )
                                 
                                 clicks = record.get("Clicks") or record.get("clicks") or 0
+                                cost = record.get("TotalCost") or record.get("ActionCost") or 0
+                                
                                 if clicks and str(clicks).strip():
                                     click_count = int(float(clicks))
+                                    cost_value = float(cost) if cost and str(cost).strip() else 0
                                     total_clicks += click_count
-                                    partner_clicks[partner] = {"clicks": click_count, "cost": 0}
+                                    total_cost += cost_value
+                                    partner_clicks[partner] = {"clicks": click_count, "cost": cost_value}
                             
-                            print(f"   ✅ Total clicks: {total_clicks:,} across {len(partner_clicks)} partners")
+                            print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f} across {len(partner_clicks)} partners")
                             
                             if total_clicks > 0:
                                 return partner_clicks
