@@ -527,11 +527,31 @@ def identify_partner_drivers(
     # Sort by absolute change to find biggest movers
     actions_movers = sorted(partner_changes, key=lambda x: abs(x["actions_change"]), reverse=True)[:3]
     
-    # CAC movers - sorted by impact on overall CAC (weighted by cost share)
-    cac_movers = sorted(partner_changes, key=lambda x: abs(x["cac_impact"]), reverse=True)[:3]
+    # Determine overall trend direction for CAC and CVR
+    overall_cac_change = (total_current_cost / total_current_actions if total_current_actions > 0 else 0) - \
+                         (total_prev_cost / total_prev_actions if total_prev_actions > 0 else 0)
+    overall_cvr_change = (total_current_actions / total_current_clicks * 100 if total_current_clicks > 0 else 0) - \
+                         (total_prev_actions / total_prev_clicks * 100 if total_prev_clicks > 0 else 0)
     
-    # CVR movers - sorted by impact on overall CVR (weighted by clicks share)  
-    cvr_movers = sorted(partner_changes, key=lambda x: abs(x["cvr_impact"]), reverse=True)[:3]
+    # CAC movers - show partners who contributed most to the OVERALL trend direction
+    # If CAC went up overall, show partners with biggest positive cac_impact
+    # If CAC went down overall, show partners with biggest negative cac_impact
+    if overall_cac_change >= 0:
+        # CAC increased - show partners who drove it UP (positive impact)
+        cac_movers = sorted(partner_changes, key=lambda x: x["cac_impact"], reverse=True)[:3]
+    else:
+        # CAC decreased - show partners who drove it DOWN (negative impact, so sort ascending)
+        cac_movers = sorted(partner_changes, key=lambda x: x["cac_impact"])[:3]
+    
+    # CVR movers - show partners who contributed most to the OVERALL trend direction
+    # If CVR went up overall, show partners with biggest positive cvr_impact
+    # If CVR went down overall, show partners with biggest negative cvr_impact
+    if overall_cvr_change >= 0:
+        # CVR increased - show partners who drove it UP (positive impact)
+        cvr_movers = sorted(partner_changes, key=lambda x: x["cvr_impact"], reverse=True)[:3]
+    else:
+        # CVR decreased - show partners who drove it DOWN (negative impact, so sort ascending)
+        cvr_movers = sorted(partner_changes, key=lambda x: x["cvr_impact"])[:3]
     
     # Filter out zero/negligible changes
     actions_movers = [p for p in actions_movers if p["actions_change"] != 0]
