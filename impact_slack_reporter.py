@@ -151,13 +151,14 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
-    Fetch aggregated stats including clicks and cost by partner via ReportExport.
+    Fetch aggregated stats including clicks, cost, and actions by partner via ReportExport.
     Uses Performance by Partner report for partner-level breakdown.
     """
     import time
     
     total_clicks = 0
     total_cost = 0
+    total_actions = 0
     partner_clicks = {}
     
     # Use Performance by Partner report for partner-level data
@@ -250,15 +251,22 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                                 
                                 clicks = record.get("Clicks") or record.get("clicks") or 0
                                 cost = record.get("TotalCost") or record.get("ActionCost") or 0
+                                actions = record.get("Actions") or record.get("actions") or 0
                                 
                                 if clicks and str(clicks).strip():
                                     click_count = int(float(clicks))
                                     cost_value = float(cost) if cost and str(cost).strip() else 0
+                                    action_count = int(float(actions)) if actions and str(actions).strip() else 0
                                     total_clicks += click_count
                                     total_cost += cost_value
-                                    partner_clicks[partner] = {"clicks": click_count, "cost": cost_value}
+                                    total_actions += action_count
+                                    partner_clicks[partner] = {
+                                        "clicks": click_count, 
+                                        "cost": cost_value,
+                                        "actions": action_count
+                                    }
                             
-                            print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f} across {len(partner_clicks)} partners")
+                            print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f}, Total actions: {total_actions:,} across {len(partner_clicks)} partners")
                             
                             if total_clicks > 0:
                                 return partner_clicks
@@ -319,23 +327,23 @@ def identify_new_top_partners(current_top: list[str], historical_tops: list[list
 def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict[str, Any]:
     """
     Process raw data into the key metrics we care about.
-    Note: actions parameter now contains only Payment Success actions (filtered at API level)
+    
+    Primary metrics (clicks, cost, actions) come from Performance by Partner report (partner_stats).
+    Actions API data is used for reversal tracking and partner-level detail.
     """
-    # Initialize counters
-    payment_success_actions = 0
+    # Initialize counters from Actions API (for reversal tracking)
     reversed_actions = 0
-    total_actions = 0
+    api_total_actions = 0
     
     # Partner-level tracking
     partner_metrics = {}
     
-    # Debug: track statuses
+    # Debug: track statuses from Actions API
     status_counts = {}
     
     for action in actions:
         partner = action.get("MediaPartnerName", "Unknown")
         status = (action.get("State", "") or "").lower()
-        payout = float(action.get("Payout", 0) or 0)
         
         # Debug: count statuses
         status_counts[status] = status_counts.get(status, 0) + 1
@@ -349,49 +357,46 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
                 "cost": 0.0
             }
         
-        total_actions += 1
+        api_total_actions += 1
         partner_metrics[partner]["total_actions"] += 1
         
-        # Check for reversals - exclude from Payment Success count to match platform
+        # Track reversals from API
         if status in ["reversed", "rejected"]:
             reversed_actions += 1
             partner_metrics[partner]["reversed"] += 1
         else:
-            # Only count non-reversed actions as Payment Success
-            payment_success_actions += 1
             partner_metrics[partner]["payment_success"] += 1
-            partner_metrics[partner]["cost"] += payout
     
-    # Debug: print status breakdown
-    print(f"   📊 Action statuses: {status_counts}")
-    print(f"   📊 Counted as Payment Success: {payment_success_actions} (excluding {reversed_actions} reversed)")
+    # Debug: print status breakdown from API
+    if status_counts:
+        print(f"   📊 Action statuses (API): {status_counts}")
     
-    # Calculate total clicks and cost from partner stats (if available)
-    # Exclude _total key to avoid double counting
+    # Get primary metrics from Performance by Partner report
+    # This is the source of truth that matches the platform
     total_clicks = sum(p.get("clicks", 0) for k, p in partner_stats.items() if k != "_total") if partner_stats else 0
     total_cost = sum(p.get("cost", 0) for k, p in partner_stats.items() if k != "_total") if partner_stats else 0
+    payment_success_actions = sum(p.get("actions", 0) for k, p in partner_stats.items() if k != "_total") if partner_stats else 0
     
-    # If cost from reports is 0, fall back to payout sum from actions
-    if total_cost == 0:
-        total_cost = sum(p["cost"] for p in partner_metrics.values())
-    
-    # Merge click data into partner metrics (if available)
+    # Merge report data into partner metrics
     for partner, stats in partner_stats.items():
+        if partner == "_total":
+            continue
         if partner not in partner_metrics:
             partner_metrics[partner] = {
-                "payment_success": 0,
+                "payment_success": stats.get("actions", 0),
                 "reversed": 0,
-                "total_actions": 0,
+                "total_actions": stats.get("actions", 0),
                 "cost": stats.get("cost", 0)
             }
         partner_metrics[partner]["clicks"] = stats.get("clicks", 0)
+        # Use actions from report as payment_success for this partner
+        partner_metrics[partner]["payment_success"] = stats.get("actions", 0)
     
     # Calculate derived metrics
-    # Note: CPC and Conversion Rate require click data from Reports API
     cpc = total_cost / total_clicks if total_clicks > 0 else None
     conversion_rate = (payment_success_actions / total_clicks * 100) if total_clicks > 0 else None
-    # Reversal rate = reversed Payment Success actions / total Payment Success actions
-    reversal_rate = (reversed_actions / payment_success_actions * 100) if payment_success_actions > 0 else 0
+    # Reversal rate based on API data (reversed / total from API)
+    reversal_rate = (reversed_actions / api_total_actions * 100) if api_total_actions > 0 else 0
     cac = total_cost / payment_success_actions if payment_success_actions > 0 else None
     
     return {
@@ -403,7 +408,7 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         "reversal_rate": reversal_rate,
         "cac": cac,
         "reversed_actions": reversed_actions,
-        "total_actions": total_actions,
+        "total_actions": api_total_actions,
         "partner_metrics": partner_metrics
     }
 
