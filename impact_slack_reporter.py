@@ -161,37 +161,18 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     total_actions = 0
     partner_clicks = {}
     
-    # Use Performance by Partner report for partner-level data
-    report_id = "att_adv_performance_by_media_pm_only"
+    # Try Partner Cost Breakdown by Event Date report first (might have event filtering)
+    # Fall back to Performance by Partner if it doesn't work
+    report_id = "partner_cost_breakdown_by_event_date"
     
-    # Try adding ACTION_TRACKER_ID filter for Payment Success only
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
         "SUBAID": CAMPAIGN_ID,
-        "ACTION_TRACKER_ID": PAYMENT_SUCCESS_EVENT_TYPE_ID,  # Filter to Payment Success
     }
     
     try:
-        # First, let's list reports to see if there's one filtered by action type
-        print(f"   🔍 Checking for action-type filtered reports...")
-        reports_response = requests.get(
-            f"{BASE_URL}/Reports",
-            auth=get_auth(),
-            headers={"Accept": "application/json"}
-        )
-        if reports_response.status_code == 200:
-            reports = reports_response.json().get("Reports", [])
-            action_reports = [r for r in reports if 
-                ("action" in r.get("Name", "").lower() or "event" in r.get("Name", "").lower()) and
-                "partner" in r.get("Name", "").lower() and
-                r.get("ApiAccessible")]
-            if action_reports:
-                print(f"   📋 Found action/event reports with partner:")
-                for r in action_reports[:5]:
-                    print(f"      - {r.get('Name')} (ID: {r.get('Id')})")
-        
-        print(f"   🔍 Fetching Performance by Partner with ACTION_TRACKER_ID={PAYMENT_SUCCESS_EVENT_TYPE_ID}...")
+        print(f"   🔍 Trying Partner Cost Breakdown by Event Date report...")
         response = requests.get(
             f"{BASE_URL}/ReportExport/{report_id}",
             auth=get_auth(),
