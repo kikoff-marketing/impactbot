@@ -164,14 +164,34 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     # Use Performance by Partner report for partner-level data
     report_id = "att_adv_performance_by_media_pm_only"
     
+    # Try adding ACTION_TRACKER_ID filter for Payment Success only
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
         "SUBAID": CAMPAIGN_ID,
+        "ACTION_TRACKER_ID": PAYMENT_SUCCESS_EVENT_TYPE_ID,  # Filter to Payment Success
     }
     
     try:
-        print(f"   🔍 Fetching clicks by partner via ReportExport...")
+        # First, let's list reports to see if there's one filtered by action type
+        print(f"   🔍 Checking for action-type filtered reports...")
+        reports_response = requests.get(
+            f"{BASE_URL}/Reports",
+            auth=get_auth(),
+            headers={"Accept": "application/json"}
+        )
+        if reports_response.status_code == 200:
+            reports = reports_response.json().get("Reports", [])
+            action_reports = [r for r in reports if 
+                ("action" in r.get("Name", "").lower() or "event" in r.get("Name", "").lower()) and
+                "partner" in r.get("Name", "").lower() and
+                r.get("ApiAccessible")]
+            if action_reports:
+                print(f"   📋 Found action/event reports with partner:")
+                for r in action_reports[:5]:
+                    print(f"      - {r.get('Name')} (ID: {r.get('Id')})")
+        
+        print(f"   🔍 Fetching Performance by Partner with ACTION_TRACKER_ID={PAYMENT_SUCCESS_EVENT_TYPE_ID}...")
         response = requests.get(
             f"{BASE_URL}/ReportExport/{report_id}",
             auth=get_auth(),
@@ -328,17 +348,18 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
     """
     Process raw data into the key metrics we care about.
     
-    Primary metrics (clicks, cost, actions) come from Performance by Partner report (partner_stats).
-    Actions API data is used for reversal tracking and partner-level detail.
+    - Actions count comes from Actions API (filtered to Payment Success event type)
+    - Clicks and Cost come from Performance by Partner report (matches platform exactly)
     """
-    # Initialize counters from Actions API (for reversal tracking)
+    # Initialize counters
+    payment_success_actions = 0
     reversed_actions = 0
-    api_total_actions = 0
+    total_actions = 0
     
     # Partner-level tracking
     partner_metrics = {}
     
-    # Debug: track statuses from Actions API
+    # Debug: track statuses
     status_counts = {}
     
     for action in actions:
@@ -357,46 +378,46 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
                 "cost": 0.0
             }
         
-        api_total_actions += 1
+        total_actions += 1
         partner_metrics[partner]["total_actions"] += 1
         
-        # Track reversals from API
+        # Check for reversals - exclude from Payment Success count to match platform
         if status in ["reversed", "rejected"]:
             reversed_actions += 1
             partner_metrics[partner]["reversed"] += 1
         else:
+            # Only count non-reversed actions as Payment Success
+            payment_success_actions += 1
             partner_metrics[partner]["payment_success"] += 1
     
-    # Debug: print status breakdown from API
+    # Debug: print status breakdown
     if status_counts:
-        print(f"   📊 Action statuses (API): {status_counts}")
+        print(f"   📊 Action statuses: {status_counts}")
+        print(f"   📊 Payment Success (excl reversed): {payment_success_actions}")
     
-    # Get primary metrics from Performance by Partner report
-    # This is the source of truth that matches the platform
+    # Get Clicks and Cost from Performance by Partner report (matches platform exactly)
     total_clicks = sum(p.get("clicks", 0) for k, p in partner_stats.items() if k != "_total") if partner_stats else 0
     total_cost = sum(p.get("cost", 0) for k, p in partner_stats.items() if k != "_total") if partner_stats else 0
-    payment_success_actions = sum(p.get("actions", 0) for k, p in partner_stats.items() if k != "_total") if partner_stats else 0
     
-    # Merge report data into partner metrics
+    # Merge click data into partner metrics
     for partner, stats in partner_stats.items():
         if partner == "_total":
             continue
         if partner not in partner_metrics:
             partner_metrics[partner] = {
-                "payment_success": stats.get("actions", 0),
+                "payment_success": 0,
                 "reversed": 0,
-                "total_actions": stats.get("actions", 0),
+                "total_actions": 0,
                 "cost": stats.get("cost", 0)
             }
         partner_metrics[partner]["clicks"] = stats.get("clicks", 0)
-        # Use actions from report as payment_success for this partner
-        partner_metrics[partner]["payment_success"] = stats.get("actions", 0)
+        partner_metrics[partner]["cost"] = stats.get("cost", 0)
     
     # Calculate derived metrics
     cpc = total_cost / total_clicks if total_clicks > 0 else None
     conversion_rate = (payment_success_actions / total_clicks * 100) if total_clicks > 0 else None
-    # Reversal rate based on API data (reversed / total from API)
-    reversal_rate = (reversed_actions / api_total_actions * 100) if api_total_actions > 0 else 0
+    # Reversal rate based on API data
+    reversal_rate = (reversed_actions / total_actions * 100) if total_actions > 0 else 0
     cac = total_cost / payment_success_actions if payment_success_actions > 0 else None
     
     return {
@@ -408,7 +429,7 @@ def process_metrics(actions: list[dict], partner_stats: Dict[str, Dict]) -> Dict
         "reversal_rate": reversal_rate,
         "cac": cac,
         "reversed_actions": reversed_actions,
-        "total_actions": api_total_actions,
+        "total_actions": total_actions,
         "partner_metrics": partner_metrics
     }
 
