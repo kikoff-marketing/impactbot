@@ -161,9 +161,9 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     total_actions = 0
     partner_clicks = {}
     
-    # Try Partner Cost Breakdown by Event Date report first (might have event filtering)
-    # Fall back to Performance by Partner if it doesn't work
-    report_id = "partner_cost_breakdown_by_event_date"
+    # Use Performance by Partner report for clicks and cost
+    # Note: Actions count comes from Actions API (filtered to Payment Success)
+    report_id = "att_adv_performance_by_media_pm_only"
     
     params = {
         "START_DATE": start_date,
@@ -172,7 +172,7 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     }
     
     try:
-        print(f"   🔍 Trying Partner Cost Breakdown by Event Date report...")
+        print(f"   🔍 Fetching clicks/cost via Performance by Partner report...")
         response = requests.get(
             f"{BASE_URL}/ReportExport/{report_id}",
             auth=get_auth(),
