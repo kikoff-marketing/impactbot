@@ -208,8 +208,8 @@ def identify_partners_for_outreach(
                     "prev_month_total": prev_month_total
                 })
     
-    # Sort by biggest decline
-    partners_for_outreach.sort(key=lambda x: x["pct_change"])
+    # Sort by biggest net volume decrease (most negative first)
+    partners_for_outreach.sort(key=lambda x: x["current_mtd"] - x["previous_mtd"])
     
     return partners_for_outreach
 
