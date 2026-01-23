@@ -108,6 +108,112 @@ def get_month_range(months_back: int = 1) -> tuple[str, str]:
     return first_day.strftime("%Y-%m-%d"), last_day.strftime("%Y-%m-%d")
 
 
+def get_mtd_range() -> tuple[str, str]:
+    """
+    Get month-to-date range: first day of current month to yesterday.
+    """
+    today = datetime.now()
+    first_day = datetime(today.year, today.month, 1)
+    yesterday = today - timedelta(days=1)
+    
+    return first_day.strftime("%Y-%m-%d"), yesterday.strftime("%Y-%m-%d")
+
+
+def get_previous_mtd_range() -> tuple[str, str]:
+    """
+    Get previous month-to-date range: first day of previous month to same day of month as yesterday.
+    E.g., if today is Jan 15, returns Dec 1 to Dec 14.
+    """
+    today = datetime.now()
+    yesterday = today - timedelta(days=1)
+    day_of_month = yesterday.day
+    
+    # Calculate previous month
+    year = today.year
+    month = today.month - 1
+    if month <= 0:
+        month = 12
+        year -= 1
+    
+    first_day = datetime(year, month, 1)
+    # Use same day of month, but cap at last day of previous month if needed
+    from calendar import monthrange
+    last_day_of_prev_month = monthrange(year, month)[1]
+    end_day = min(day_of_month, last_day_of_prev_month)
+    end_date = datetime(year, month, end_day)
+    
+    return first_day.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d")
+
+
+def should_run_mtd_analysis() -> bool:
+    """
+    Check if MTD partner outreach analysis should run.
+    Only runs when day of month >= 7 (enough data for reliable comparison).
+    Note: Monday check is handled by the workflow schedule.
+    """
+    today = datetime.now()
+    day_of_month = today.day
+    
+    return day_of_month >= 7
+
+
+def identify_partners_for_outreach(
+    current_mtd_actions: list[dict],
+    previous_mtd_actions: list[dict],
+    previous_month_actions: list[dict]
+) -> list[dict]:
+    """
+    Identify partners experiencing >25% MTD decline who were top 20 last month.
+    
+    Returns list of partners with their decline info.
+    """
+    # Count actions by partner for each period
+    def count_by_partner(actions: list[dict]) -> Dict[str, int]:
+        counts = {}
+        for action in actions:
+            partner = action.get("MediaPartnerName", "Unknown")
+            status = (action.get("State", "") or "").lower()
+            # Only count non-reversed actions
+            if status not in ["reversed", "rejected"]:
+                counts[partner] = counts.get(partner, 0) + 1
+        return counts
+    
+    current_mtd_counts = count_by_partner(current_mtd_actions)
+    previous_mtd_counts = count_by_partner(previous_mtd_actions)
+    previous_month_counts = count_by_partner(previous_month_actions)
+    
+    # Get top 20 partners from previous month by volume
+    top_20_previous = sorted(
+        previous_month_counts.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:20]
+    top_20_partners = [p[0] for p in top_20_previous]
+    
+    # Find partners with >25% decline MTD vs previous MTD
+    partners_for_outreach = []
+    for partner in top_20_partners:
+        current = current_mtd_counts.get(partner, 0)
+        previous = previous_mtd_counts.get(partner, 0)
+        prev_month_total = previous_month_counts.get(partner, 0)
+        
+        if previous > 0:
+            pct_change = ((current - previous) / previous) * 100
+            if pct_change <= -25:  # 25% or more decline
+                partners_for_outreach.append({
+                    "partner": partner,
+                    "current_mtd": current,
+                    "previous_mtd": previous,
+                    "pct_change": pct_change,
+                    "prev_month_total": prev_month_total
+                })
+    
+    # Sort by biggest decline
+    partners_for_outreach.sort(key=lambda x: x["pct_change"])
+    
+    return partners_for_outreach
+
+
 def fetch_actions(start_date: str, end_date: str) -> list[dict]:
     """Fetch all Payment Success actions within a date range."""
     actions = []
@@ -676,6 +782,21 @@ def format_partner_movers(movers: list, metric_type: str) -> str:
     return "\n".join(lines)
 
 
+def format_outreach_recommendations(partners: list) -> str:
+    """Format partner outreach recommendations into readable text."""
+    if not partners:
+        return "_No partners flagged for outreach this week_"
+    
+    lines = []
+    for p in partners:
+        pct = p["pct_change"]
+        lines.append(
+            f"• *{p['partner']}*: {p['current_mtd']:,} MTD vs {p['previous_mtd']:,} prev MTD ({pct:.0f}%)"
+        )
+    
+    return "\n".join(lines)
+
+
 def build_slack_message(
     current: Dict,
     changes: Dict,
@@ -683,7 +804,8 @@ def build_slack_message(
     date_range: tuple[str, str],
     prev_date_range: tuple[str, str],
     new_top_partners: list[str] = None,
-    report_type: str = "weekly"
+    report_type: str = "weekly",
+    outreach_partners: list[dict] = None
 ) -> Dict[str, Any]:
     """Build Slack Block Kit message."""
     
@@ -807,6 +929,21 @@ def build_slack_message(
             }
         })
     
+    # Add partner outreach recommendations if available (only on Mondays, day >= 7)
+    if outreach_partners:
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "section",
+            "text": {"type": "mrkdwn", "text": "*📞 Recommendations for Partner Outreach*\n_Top 20 partners (by prev month volume) with >25% MTD decline:_"}
+        })
+        blocks.append({
+            "type": "section",
+            "text": {
+                "type": "mrkdwn",
+                "text": format_outreach_recommendations(outreach_partners)
+            }
+        })
+    
     blocks.extend([
         {"type": "divider"},
         {
@@ -901,6 +1038,42 @@ def run_weekly_report():
     changes = calculate_changes(current_metrics, previous_metrics)
     partner_drivers = identify_partner_drivers(current_metrics, previous_metrics)
     
+    # Check if we should run MTD partner outreach analysis (Monday, day >= 7)
+    outreach_partners = None
+    if should_run_mtd_analysis():
+        print("📥 Fetching MTD data for partner outreach analysis...")
+        mtd_start, mtd_end = get_mtd_range()
+        prev_mtd_start, prev_mtd_end = get_previous_mtd_range()
+        prev_month_start, prev_month_end = get_month_range(months_back=1)
+        
+        print(f"   Current MTD: {mtd_start} to {mtd_end}")
+        print(f"   Previous MTD: {prev_mtd_start} to {prev_mtd_end}")
+        print(f"   Previous month: {prev_month_start} to {prev_month_end}")
+        
+        current_mtd_actions = fetch_actions(mtd_start, mtd_end)
+        previous_mtd_actions = fetch_actions(prev_mtd_start, prev_mtd_end)
+        previous_month_actions = fetch_actions(prev_month_start, prev_month_end)
+        
+        print(f"   Current MTD actions: {len(current_mtd_actions)}")
+        print(f"   Previous MTD actions: {len(previous_mtd_actions)}")
+        print(f"   Previous month actions: {len(previous_month_actions)}")
+        
+        outreach_partners = identify_partners_for_outreach(
+            current_mtd_actions,
+            previous_mtd_actions,
+            previous_month_actions
+        )
+        
+        if outreach_partners:
+            print(f"   ⚠️  Found {len(outreach_partners)} partners for outreach:")
+            for p in outreach_partners:
+                print(f"      - {p['partner']}: {p['pct_change']:.0f}% ({p['current_mtd']} vs {p['previous_mtd']} prev MTD)")
+        else:
+            print(f"   ✅ No partners flagged for outreach")
+    else:
+        today = datetime.now()
+        print(f"   ℹ️  Skipping MTD analysis (day={today.day}, weekday={today.weekday()})")
+    
     # Print summary to console
     def fmt_pct(val):
         return f"{val:.1f}" if val is not None else "N/A"
@@ -925,7 +1098,8 @@ def run_weekly_report():
         partner_drivers,
         (current_start, current_end),
         (previous_start, previous_end),
-        new_top_partners
+        new_top_partners,
+        outreach_partners=outreach_partners
     )
     
     send_to_slack(message)
