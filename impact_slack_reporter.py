@@ -214,6 +214,63 @@ def identify_partners_for_outreach(
     return partners_for_outreach
 
 
+def identify_partners_for_outreach_monthly(
+    current_month_actions: list[dict],
+    previous_month_actions: list[dict]
+) -> list[dict]:
+    """
+    Identify partners experiencing >25% MoM decline who were top 20 last month.
+    Used for monthly reports.
+    
+    Returns list of partners with their decline info.
+    """
+    # Count actions by partner for each period
+    def count_by_partner(actions: list[dict]) -> Dict[str, int]:
+        counts = {}
+        for action in actions:
+            partner = action.get("MediaPartnerName", "Unknown")
+            status = (action.get("State", "") or "").lower()
+            # Only count non-reversed actions
+            if status not in ["reversed", "rejected"]:
+                counts[partner] = counts.get(partner, 0) + 1
+        return counts
+    
+    current_counts = count_by_partner(current_month_actions)
+    previous_counts = count_by_partner(previous_month_actions)
+    
+    # Get top 20 partners from previous month by volume
+    top_20_previous = sorted(
+        previous_counts.items(),
+        key=lambda x: x[1],
+        reverse=True
+    )[:20]
+    top_20_partners = [p[0] for p in top_20_previous]
+    
+    # Find partners with >25% decline MoM
+    partners_for_outreach = []
+    for partner in top_20_partners:
+        current = current_counts.get(partner, 0)
+        previous = previous_counts.get(partner, 0)
+        
+        if previous > 0:
+            pct_change = ((current - previous) / previous) * 100
+            if pct_change <= -25:  # 25% or more decline
+                partners_for_outreach.append({
+                    "partner": partner,
+                    "current_month": current,
+                    "previous_month": previous,
+                    "pct_change": pct_change,
+                    # Include MTD fields for compatibility with format function
+                    "current_mtd": current,
+                    "previous_mtd": previous
+                })
+    
+    # Sort by biggest net volume decrease (most negative first)
+    partners_for_outreach.sort(key=lambda x: x["current_month"] - x["previous_month"])
+    
+    return partners_for_outreach
+
+
 def fetch_actions(start_date: str, end_date: str) -> list[dict]:
     """Fetch all Payment Success actions within a date range."""
     actions = []
@@ -782,17 +839,24 @@ def format_partner_movers(movers: list, metric_type: str) -> str:
     return "\n".join(lines)
 
 
-def format_outreach_recommendations(partners: list) -> str:
+def format_outreach_recommendations(partners: list, report_type: str = "weekly") -> str:
     """Format partner outreach recommendations into readable text."""
     if not partners:
+        if report_type == "monthly":
+            return "_No partners flagged for outreach this month_"
         return "_No partners flagged for outreach this week_"
     
     lines = []
     for p in partners:
         pct = p["pct_change"]
-        lines.append(
-            f"• *{p['partner']}*: {p['current_mtd']:,} MTD vs {p['previous_mtd']:,} prev MTD ({pct:.0f}%)"
-        )
+        if report_type == "monthly":
+            lines.append(
+                f"• *{p['partner']}*: {p['current_month']:,} vs {p['previous_month']:,} prev month ({pct:.0f}%)"
+            )
+        else:
+            lines.append(
+                f"• *{p['partner']}*: {p['current_mtd']:,} MTD vs {p['previous_mtd']:,} prev MTD ({pct:.0f}%)"
+            )
     
     return "\n".join(lines)
 
@@ -929,18 +993,22 @@ def build_slack_message(
             }
         })
     
-    # Add partner outreach recommendations if available (only on Mondays, day >= 7)
+    # Add partner outreach recommendations if available
     if outreach_partners:
         blocks.append({"type": "divider"})
+        if report_type == "monthly":
+            outreach_header = "*📞 Recommendations for Partner Outreach*\n_Top 20 partners (by prev month volume) with >25% MoM decline:_"
+        else:
+            outreach_header = "*📞 Recommendations for Partner Outreach*\n_Top 20 partners (by prev month volume) with >25% MTD decline:_"
         blocks.append({
             "type": "section",
-            "text": {"type": "mrkdwn", "text": "*📞 Recommendations for Partner Outreach*\n_Top 20 partners (by prev month volume) with >25% MTD decline:_"}
+            "text": {"type": "mrkdwn", "text": outreach_header}
         })
         blocks.append({
             "type": "section",
             "text": {
                 "type": "mrkdwn",
-                "text": format_outreach_recommendations(outreach_partners)
+                "text": format_outreach_recommendations(outreach_partners, report_type)
             }
         })
     
@@ -1168,6 +1236,20 @@ def run_monthly_report():
     changes = calculate_changes(current_metrics, previous_metrics)
     partner_drivers = identify_partner_drivers(current_metrics, previous_metrics)
     
+    # Identify partners for outreach (>25% decline from top 20 previous month partners)
+    print("📥 Analyzing partners for outreach recommendations...")
+    outreach_partners = identify_partners_for_outreach_monthly(
+        current_actions,
+        previous_actions
+    )
+    
+    if outreach_partners:
+        print(f"   ⚠️  Found {len(outreach_partners)} partners for outreach:")
+        for p in outreach_partners:
+            print(f"      - {p['partner']}: {p['pct_change']:.0f}% ({p['current_month']} vs {p['previous_month']} prev month)")
+    else:
+        print(f"   ✅ No partners flagged for outreach")
+    
     # Print summary to console
     def fmt_pct(val):
         return f"{val:.1f}" if val is not None else "N/A"
@@ -1193,7 +1275,8 @@ def run_monthly_report():
         (current_start, current_end),
         (previous_start, previous_end),
         new_top_partners,
-        report_type="monthly"
+        report_type="monthly",
+        outreach_partners=outreach_partners
     )
     
     send_to_slack(message)
