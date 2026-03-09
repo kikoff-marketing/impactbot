@@ -355,9 +355,9 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
             return {}
         
         print(f"   ⏳ Job queued, polling for completion...")
-        
-        # Poll for job completion (increased to 20 attempts = 40 seconds max)
-        for attempt in range(20):
+
+        # Poll for job completion (60 attempts × 3s = 180 seconds max)
+        for attempt in range(60):
             status_response = requests.get(
                 f"https://api.impact.com{queued_uri}",
                 auth=get_auth(),
@@ -365,15 +365,15 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
             )
             
             if status_response.status_code != 200:
-                print(f"   ⚠️  Poll attempt {attempt + 1}/20 failed: {status_response.status_code}")
-                time.sleep(2)
+                print(f"   ⚠️  Poll attempt {attempt + 1}/60 failed: {status_response.status_code}")
+                time.sleep(3)
                 continue
-            
+
             job_data = status_response.json()
             job_status = job_data.get("Status", "").upper()
-            
+
             if attempt % 5 == 0:  # Log every 5th attempt
-                print(f"   ⏳ Attempt {attempt + 1}/20 - Status: {job_status}")
+                print(f"   ⏳ Attempt {attempt + 1}/60 - Status: {job_status}")
             
             if job_status == "COMPLETED":
                 # Download the results
@@ -446,10 +446,10 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                 print(f"   ❌ Job failed: {job_data.get('StatusMessage')}")
                 break
             
-            time.sleep(2)
+            time.sleep(3)
         else:
             # Loop completed without breaking - timeout
-            print(f"   ⚠️  Job timed out after 20 attempts. Last status: {job_status}")
+            print(f"   ⚠️  Job timed out after 60 attempts. Last status: {job_status}")
                 
     except Exception as e:
         print(f"   ⚠️  Error fetching clicks: {e}")
