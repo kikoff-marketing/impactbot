@@ -331,7 +331,7 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
-        "SUBAID": CAMPAIGN_ID,
+        "CAMPAIGN_ID": CAMPAIGN_ID,
     }
     
     try:
@@ -432,7 +432,7 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                             
                             print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f}, Total actions: {total_actions:,} across {len(partner_clicks)} partners")
                             
-                            if total_clicks > 0:
+                            if partner_clicks:
                                 return partner_clicks
                         else:
                             print(f"   ⚠️  No records in download response")
