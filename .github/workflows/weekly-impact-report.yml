@@ -9,12 +9,6 @@ on:
   
   # Allows manual trigger from GitHub UI (Actions tab → Run workflow)
   workflow_dispatch:
-    inputs:
-      use_test_channel:
-        description: 'Send to test channel instead of production'
-        required: false
-        type: boolean
-        default: true
 
 jobs:
   send-report:
@@ -36,5 +30,5 @@ jobs:
         env:
           IMPACT_ACCOUNT_SID: ${{ secrets.IMPACT_ACCOUNT_SID }}
           IMPACT_AUTH_TOKEN: ${{ secrets.IMPACT_AUTH_TOKEN }}
-          SLACK_WEBHOOK_URL: ${{ (github.event.inputs.use_test_channel == 'true' && secrets.SLACK_WEBHOOK_URL_TEST) || secrets.SLACK_WEBHOOK_URL }}
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
         run: python impact_slack_reporter.py
