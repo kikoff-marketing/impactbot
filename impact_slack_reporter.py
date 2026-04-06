@@ -329,8 +329,9 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     report_id = "att_adv_performance_by_media_pm_only"
     
     params = {
-        "START_DATE": start_date,
-        "END_DATE": end_date,
+        "SUBAID": CAMPAIGN_ID,
+        "StartDate": start_date,
+        "EndDate": end_date,
     }
     
     try:
