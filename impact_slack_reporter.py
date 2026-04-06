@@ -335,21 +335,43 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     }
     
     try:
+        # Debug: list available reports to verify report handle is valid
+        print(f"   🔍 Listing available reports...")
+        reports_resp = requests.get(
+            f"{BASE_URL}/Reports",
+            auth=get_auth(),
+            headers={"Accept": "application/json"}
+        )
+        if reports_resp.status_code == 200:
+            reports_data = reports_resp.json()
+            reports = reports_data.get("Reports", [])
+            print(f"   📋 Found {len(reports)} reports")
+            for r in reports:
+                rid = r.get("Id", "")
+                rname = r.get("Name", "")
+                rhandle = r.get("Handle", "")
+                if "media" in str(rid).lower() or "media" in rname.lower() or "partner" in rname.lower() or "media" in rhandle.lower():
+                    print(f"      → {rid} | handle={rhandle} | {rname}")
+        else:
+            print(f"   ⚠️  Could not list reports: {reports_resp.status_code}")
+
         print(f"   🔍 Fetching clicks/cost via Performance by Partner report...")
+        print(f"   📋 Report ID: {report_id}, Params: {params}")
         response = requests.get(
             f"{BASE_URL}/ReportExport/{report_id}",
             auth=get_auth(),
             params=params,
             headers={"Accept": "application/json"}
         )
-        
+
         if response.status_code != 200:
             print(f"   ⚠️  ReportExport failed: {response.status_code} - {response.text[:200]}")
             return {}
-        
+
         data = response.json()
+        print(f"   📋 ReportExport response: {data}")
         queued_uri = data.get("QueuedUri")
-        
+
         if not queued_uri:
             print(f"   ⚠️  No QueuedUri returned. Response: {data}")
             return {}
@@ -379,19 +401,22 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                 # Download the results
                 result_uri = job_data.get("ResultUri")
                 if result_uri:
+                    print(f"   📋 ResultUri: {result_uri}")
                     dl_response = requests.get(
                         f"https://api.impact.com{result_uri}",
                         auth=get_auth(),
-                        headers={"Accept": "application/json"}
                     )
-                    
+
                     if dl_response.status_code == 200:
                         # Parse CSV
                         import csv
                         import io
                         content_type = dl_response.headers.get("Content-Type", "")
+                        resp_len = len(dl_response.text)
+                        line_count = dl_response.text.count('\n')
                         print(f"   📋 Content-Type: {content_type}")
-                        print(f"   📋 Response preview: {dl_response.text[:500]}")
+                        print(f"   📋 Response length: {resp_len} chars, {line_count} newlines")
+                        print(f"   📋 Full response (first 2000 chars): {dl_response.text[:2000]}")
 
                         if "json" in content_type:
                             dl_data = dl_response.json()
