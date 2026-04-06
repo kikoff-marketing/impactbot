@@ -390,10 +390,13 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                         import csv
                         import io
                         content_type = dl_response.headers.get("Content-Type", "")
-                        
+                        print(f"   📋 Content-Type: {content_type}")
+                        print(f"   📋 Response preview: {dl_response.text[:500]}")
+
                         if "json" in content_type:
                             dl_data = dl_response.json()
-                            records = dl_data.get("Records", [])
+                            print(f"   📋 JSON keys: {list(dl_data.keys())}")
+                            records = dl_data.get("Records", dl_data.get("records", dl_data.get("Data", dl_data.get("data", []))))
                         else:
                             reader = csv.DictReader(io.StringIO(dl_response.text))
                             records = list(reader)
