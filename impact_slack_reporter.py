@@ -331,7 +331,6 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     params = {
         "START_DATE": start_date,
         "END_DATE": end_date,
-        "CAMPAIGN_ID": CAMPAIGN_ID,
     }
     
     try:
@@ -420,15 +419,15 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                                 cost = record.get("TotalCost") or record.get("ActionCost") or 0
                                 actions = record.get("Actions") or record.get("actions") or 0
                                 
-                                if clicks and str(clicks).strip():
-                                    click_count = int(float(clicks))
-                                    cost_value = float(cost) if cost and str(cost).strip() else 0
-                                    action_count = int(float(actions)) if actions and str(actions).strip() else 0
-                                    total_clicks += click_count
-                                    total_cost += cost_value
-                                    total_actions += action_count
+                                click_count = int(float(clicks)) if clicks and str(clicks).strip() else 0
+                                cost_value = float(cost) if cost and str(cost).strip() else 0
+                                action_count = int(float(actions)) if actions and str(actions).strip() else 0
+                                total_clicks += click_count
+                                total_cost += cost_value
+                                total_actions += action_count
+                                if click_count > 0 or cost_value > 0:
                                     partner_clicks[partner] = {
-                                        "clicks": click_count, 
+                                        "clicks": click_count,
                                         "cost": cost_value,
                                         "actions": action_count
                                     }
