@@ -314,177 +314,74 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
-    Fetch aggregated stats including clicks, cost, and actions by partner via ReportExport.
-    Uses Performance by Partner report for partner-level breakdown.
+    Fetch aggregated stats including clicks, cost, and actions by partner.
+    Uses the synchronous Reports endpoint (not the async ReportExport).
     """
-    import time
-    
-    total_clicks = 0
-    total_cost = 0
-    total_actions = 0
     partner_clicks = {}
-    
-    # Use Performance by Partner report for clicks and cost
-    # Note: Actions count comes from Actions API (filtered to Payment Success)
-    report_id = "att_adv_performance_by_media_pm_only"
-    
+
     params = {
-        "SUBAID": CAMPAIGN_ID,
         "StartDate": start_date,
         "EndDate": end_date,
     }
-    
-    try:
-        # Debug: list available reports to verify report handle is valid
-        print(f"   🔍 Listing available reports...")
-        reports_resp = requests.get(
-            f"{BASE_URL}/Reports",
-            auth=get_auth(),
-            headers={"Accept": "application/json"}
-        )
-        if reports_resp.status_code == 200:
-            reports_data = reports_resp.json()
-            reports = reports_data.get("Reports", [])
-            print(f"   📋 Found {len(reports)} reports")
-            for r in reports:
-                rid = r.get("Id", "")
-                rname = r.get("Name", "")
-                rhandle = r.get("Handle", "")
-                if "media" in str(rid).lower() or "media" in rname.lower() or "partner" in rname.lower() or "media" in rhandle.lower():
-                    print(f"      → {rid} | handle={rhandle} | {rname}")
-        else:
-            print(f"   ⚠️  Could not list reports: {reports_resp.status_code}")
 
-        print(f"   🔍 Fetching clicks/cost via Performance by Partner report...")
-        print(f"   📋 Report ID: {report_id}, Params: {params}")
+    try:
+        print(f"   🔍 Fetching clicks/cost via Reports endpoint...")
         response = requests.get(
-            f"{BASE_URL}/ReportExport/{report_id}",
+            f"{BASE_URL}/Reports/att_adv_performance_by_media_pm_only",
             auth=get_auth(),
             params=params,
             headers={"Accept": "application/json"}
         )
 
         if response.status_code != 200:
-            print(f"   ⚠️  ReportExport failed: {response.status_code} - {response.text[:200]}")
+            print(f"   ⚠️  Reports call failed: {response.status_code} - {response.text[:300]}")
             return {}
 
         data = response.json()
-        print(f"   📋 ReportExport response: {data}")
-        queued_uri = data.get("QueuedUri")
+        records = data.get("Records", [])
+        print(f"   📋 Got {len(records)} records")
 
-        if not queued_uri:
-            print(f"   ⚠️  No QueuedUri returned. Response: {data}")
-            return {}
-        
-        print(f"   ⏳ Job queued, polling for completion...")
+        if records:
+            print(f"   📋 Fields: {list(records[0].keys())}")
+            print(f"   📋 Sample: {records[0]}")
 
-        # Poll for job completion (60 attempts × 3s = 180 seconds max)
-        for attempt in range(60):
-            status_response = requests.get(
-                f"https://api.impact.com{queued_uri}",
-                auth=get_auth(),
-                headers={"Accept": "application/json"}
+        total_clicks = 0
+        total_cost = 0
+        total_actions = 0
+
+        for record in records:
+            partner = (
+                record.get("Media") or
+                record.get("Partner") or
+                record.get("Media_Name") or
+                "Unknown"
             )
-            
-            if status_response.status_code != 200:
-                print(f"   ⚠️  Poll attempt {attempt + 1}/60 failed: {status_response.status_code}")
-                time.sleep(3)
-                continue
 
-            job_data = status_response.json()
-            job_status = job_data.get("Status", "").upper()
+            clicks = record.get("Clicks") or record.get("TotalClicks") or 0
+            cost = record.get("TotalCost") or record.get("ActionCost") or 0
+            actions = record.get("Actions") or 0
 
-            if attempt % 5 == 0:  # Log every 5th attempt
-                print(f"   ⏳ Attempt {attempt + 1}/60 - Status: {job_status}")
-            
-            if job_status == "COMPLETED":
-                # Download the results
-                result_uri = job_data.get("ResultUri")
-                if result_uri:
-                    print(f"   📋 ResultUri: {result_uri}")
-                    dl_response = requests.get(
-                        f"https://api.impact.com{result_uri}",
-                        auth=get_auth(),
-                    )
+            click_count = int(float(clicks)) if clicks and str(clicks).strip() else 0
+            cost_value = float(cost) if cost and str(cost).strip() else 0
+            action_count = int(float(actions)) if actions and str(actions).strip() else 0
+            total_clicks += click_count
+            total_cost += cost_value
+            total_actions += action_count
+            if click_count > 0 or cost_value > 0:
+                partner_clicks[partner] = {
+                    "clicks": click_count,
+                    "cost": cost_value,
+                    "actions": action_count
+                }
 
-                    if dl_response.status_code == 200:
-                        # Parse CSV
-                        import csv
-                        import io
-                        content_type = dl_response.headers.get("Content-Type", "")
-                        resp_len = len(dl_response.text)
-                        line_count = dl_response.text.count('\n')
-                        print(f"   📋 Content-Type: {content_type}")
-                        print(f"   📋 Response length: {resp_len} chars, {line_count} newlines")
-                        print(f"   📋 Full response (first 2000 chars): {dl_response.text[:2000]}")
+        print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f}, Total actions: {total_actions:,} across {len(partner_clicks)} partners")
 
-                        if "json" in content_type:
-                            dl_data = dl_response.json()
-                            print(f"   📋 JSON keys: {list(dl_data.keys())}")
-                            records = dl_data.get("Records", dl_data.get("records", dl_data.get("Data", dl_data.get("data", []))))
-                        else:
-                            reader = csv.DictReader(io.StringIO(dl_response.text))
-                            records = list(reader)
-                        
-                        if records:
-                            # Show first record to see field names
-                            print(f"   📋 Fields: {list(records[0].keys())}")
-                            print(f"   📋 Sample: {records[0]}")
-                            
-                            for record in records:
-                                # Get partner name - try different field names
-                                partner = (
-                                    record.get("Media") or 
-                                    record.get("Partner") or 
-                                    record.get("Media_Name") or 
-                                    record.get("partner_name") or
-                                    "Unknown"
-                                )
-                                
-                                clicks = record.get("Clicks") or record.get("clicks") or 0
-                                cost = record.get("TotalCost") or record.get("ActionCost") or 0
-                                actions = record.get("Actions") or record.get("actions") or 0
-                                
-                                click_count = int(float(clicks)) if clicks and str(clicks).strip() else 0
-                                cost_value = float(cost) if cost and str(cost).strip() else 0
-                                action_count = int(float(actions)) if actions and str(actions).strip() else 0
-                                total_clicks += click_count
-                                total_cost += cost_value
-                                total_actions += action_count
-                                if click_count > 0 or cost_value > 0:
-                                    partner_clicks[partner] = {
-                                        "clicks": click_count,
-                                        "cost": cost_value,
-                                        "actions": action_count
-                                    }
-                            
-                            print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f}, Total actions: {total_actions:,} across {len(partner_clicks)} partners")
-                            
-                            if partner_clicks:
-                                return partner_clicks
-                        else:
-                            print(f"   ⚠️  No records in download response")
-                    else:
-                        print(f"   ⚠️  Download failed: {dl_response.status_code} - {dl_response.text[:200]}")
-                else:
-                    print(f"   ⚠️  No ResultUri in completed job")
-                break
-                
-            elif job_status in ["FAILED", "CANCELLED", "ERROR"]:
-                print(f"   ❌ Job failed: {job_data.get('StatusMessage')}")
-                break
-            
-            time.sleep(3)
-        else:
-            # Loop completed without breaking - timeout
-            print(f"   ⚠️  Job timed out after 60 attempts. Last status: {job_status}")
-                
     except Exception as e:
         print(f"   ⚠️  Error fetching clicks: {e}")
         import traceback
         traceback.print_exc()
-    
-    return {}
+
+    return partner_clicks
 
 
 # =============================================================================
