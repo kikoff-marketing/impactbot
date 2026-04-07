@@ -320,8 +320,8 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     partner_clicks = {}
 
     params = {
-        "StartDate": start_date,
-        "EndDate": end_date,
+        "StartDate": f"{start_date}T00:00:00Z",
+        "EndDate": f"{end_date}T23:59:59Z",
     }
 
     try:
