@@ -319,27 +319,70 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
     """
     partner_clicks = {}
 
-    params = {
-        "StartDate": f"{start_date}T00:00:00Z",
-        "EndDate": f"{end_date}T23:59:59Z",
-    }
+    # Try multiple report/param combinations to find one that returns data
+    attempts = [
+        {
+            "label": "Performance by Partner (with SUBAID)",
+            "report": "att_adv_performance_by_media_pm_only",
+            "params": {
+                "SUBAID": CAMPAIGN_ID,
+                "StartDate": f"{start_date}T00:00:00Z",
+                "EndDate": f"{end_date}T23:59:59Z",
+            },
+        },
+        {
+            "label": "Performance by Partner (no SUBAID)",
+            "report": "att_adv_performance_by_media_pm_only",
+            "params": {
+                "StartDate": f"{start_date}T00:00:00Z",
+                "EndDate": f"{end_date}T23:59:59Z",
+            },
+        },
+        {
+            "label": "Performance by Partner - All Programs",
+            "report": "performance_by_partner_all_programs",
+            "params": {
+                "StartDate": f"{start_date}T00:00:00Z",
+                "EndDate": f"{end_date}T23:59:59Z",
+            },
+        },
+        {
+            "label": "Partner Click Data",
+            "report": "adv_click_data_subaccount",
+            "params": {
+                "StartDate": f"{start_date}T00:00:00Z",
+                "EndDate": f"{end_date}T23:59:59Z",
+            },
+        },
+    ]
 
     try:
-        print(f"   🔍 Fetching clicks/cost via Reports endpoint...")
-        response = requests.get(
-            f"{BASE_URL}/Reports/att_adv_performance_by_media_pm_only",
-            auth=get_auth(),
-            params=params,
-            headers={"Accept": "application/json"}
-        )
+        records = []
+        for attempt in attempts:
+            print(f"   🔍 Trying: {attempt['label']}...")
+            response = requests.get(
+                f"{BASE_URL}/Reports/{attempt['report']}",
+                auth=get_auth(),
+                params=attempt["params"],
+                headers={"Accept": "application/json"}
+            )
 
-        if response.status_code != 200:
-            print(f"   ⚠️  Reports call failed: {response.status_code} - {response.text[:300]}")
-            return {}
+            if response.status_code != 200:
+                print(f"      ⚠️  Failed: {response.status_code} - {response.text[:200]}")
+                continue
 
-        data = response.json()
-        records = data.get("Records", [])
-        print(f"   📋 Got {len(records)} records")
+            data = response.json()
+            print(f"      📋 Response keys: {list(data.keys())}")
+            records = data.get("Records", [])
+            print(f"      📋 Got {len(records)} records")
+
+            if records:
+                print(f"      📋 Fields: {list(records[0].keys())}")
+                print(f"      📋 Sample: {records[0]}")
+                print(f"      ✅ Using this report!")
+                break
+            else:
+                print(f"      📋 Response preview: {str(data)[:500]}")
 
         if records:
             print(f"   📋 Fields: {list(records[0].keys())}")
