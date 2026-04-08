@@ -315,94 +315,42 @@ def fetch_actions(start_date: str, end_date: str) -> list[dict]:
 def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]:
     """
     Fetch aggregated stats including clicks, cost, and actions by partner.
-    Uses the synchronous Reports endpoint (not the async ReportExport).
+    Uses the synchronous Reports endpoint with the Performance by Partner report.
     """
     partner_clicks = {}
 
-    # Try multiple report/param combinations to find one that returns data
-    attempts = [
-        {
-            "label": "Performance by Partner (with SUBAID)",
-            "report": "att_adv_performance_by_media_pm_only",
-            "params": {
-                "SUBAID": CAMPAIGN_ID,
-                "StartDate": f"{start_date}T00:00:00Z",
-                "EndDate": f"{end_date}T23:59:59Z",
-            },
-        },
-        {
-            "label": "Performance by Partner (no SUBAID)",
-            "report": "att_adv_performance_by_media_pm_only",
-            "params": {
-                "StartDate": f"{start_date}T00:00:00Z",
-                "EndDate": f"{end_date}T23:59:59Z",
-            },
-        },
-        {
-            "label": "Performance by Partner - All Programs",
-            "report": "performance_by_partner_all_programs",
-            "params": {
-                "StartDate": f"{start_date}T00:00:00Z",
-                "EndDate": f"{end_date}T23:59:59Z",
-            },
-        },
-        {
-            "label": "Partner Click Data",
-            "report": "adv_click_data_subaccount",
-            "params": {
-                "StartDate": f"{start_date}T00:00:00Z",
-                "EndDate": f"{end_date}T23:59:59Z",
-            },
-        },
-    ]
+    params = {
+        "SUBAID": CAMPAIGN_ID,
+        "StartDate": f"{start_date}T00:00:00Z",
+        "EndDate": f"{end_date}T23:59:59Z",
+    }
 
     try:
-        records = []
-        for attempt in attempts:
-            print(f"   🔍 Trying: {attempt['label']}...")
-            response = requests.get(
-                f"{BASE_URL}/Reports/{attempt['report']}",
-                auth=get_auth(),
-                params=attempt["params"],
-                headers={"Accept": "application/json"}
-            )
+        print(f"   🔍 Fetching clicks/cost via Performance by Partner report...")
+        response = requests.get(
+            f"{BASE_URL}/Reports/att_adv_performance_by_media_pm_only",
+            auth=get_auth(),
+            params=params,
+            headers={"Accept": "application/json"}
+        )
 
-            if response.status_code != 200:
-                print(f"      ⚠️  Failed: {response.status_code} - {response.text[:200]}")
-                continue
+        if response.status_code != 200:
+            print(f"   ⚠️  Reports call failed: {response.status_code} - {response.text[:300]}")
+            return {}
 
-            data = response.json()
-            print(f"      📋 Response keys: {list(data.keys())}")
-            records = data.get("Records", [])
-            print(f"      📋 Got {len(records)} records")
-
-            if records:
-                print(f"      📋 Fields: {list(records[0].keys())}")
-                print(f"      📋 Sample: {records[0]}")
-                print(f"      ✅ Using this report!")
-                break
-            else:
-                print(f"      📋 Response preview: {str(data)[:500]}")
-
-        if records:
-            print(f"   📋 Fields: {list(records[0].keys())}")
-            print(f"   📋 Sample: {records[0]}")
+        data = response.json()
+        records = data.get("Records", [])
+        print(f"   📋 Got {len(records)} records from {data.get('@total', '?')} total")
 
         total_clicks = 0
         total_cost = 0
         total_actions = 0
 
         for record in records:
-            partner = (
-                record.get("Media") or
-                record.get("Partner") or
-                record.get("Media_Name") or
-                "Unknown"
-            )
-
-            clicks = record.get("Clicks") or record.get("TotalClicks") or 0
-            cost = record.get("TotalCost") or record.get("ActionCost") or 0
-            actions = record.get("Actions") or 0
+            partner = record.get("Media", "Unknown")
+            clicks = record.get("Clicks", 0)
+            cost = record.get("TotalCost", 0)
+            actions = record.get("Actions", 0)
 
             click_count = int(float(clicks)) if clicks and str(clicks).strip() else 0
             cost_value = float(cost) if cost and str(cost).strip() else 0
@@ -417,10 +365,10 @@ def fetch_media_partner_stats(start_date: str, end_date: str) -> Dict[str, Dict]
                     "actions": action_count
                 }
 
-        print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f}, Total actions: {total_actions:,} across {len(partner_clicks)} partners")
+        print(f"   ✅ Total clicks: {total_clicks:,}, Total cost: ${total_cost:,.2f} across {len(partner_clicks)} partners")
 
     except Exception as e:
-        print(f"   ⚠️  Error fetching clicks: {e}")
+        print(f"   ⚠️  Error fetching partner stats: {e}")
         import traceback
         traceback.print_exc()
 
